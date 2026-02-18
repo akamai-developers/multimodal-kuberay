@@ -135,8 +135,6 @@ Once complete, access the Tilt UI at http://localhost:10350 to monitor deploymen
 3. Adjust `tensor_parallel_size` and `gpu_memory_utilization` based on model size
 4. Redeploy with `make up` (Tilt auto-reloads)
 
-**See Also**: [VISION_MODEL_USAGE.md](VISION_MODEL_USAGE.md) for detailed vision model documentation and examples.
-
 ## Usage
 
 ### Accessing Services
@@ -225,8 +223,6 @@ curl -X POST "http://${SERVICE_IP}/v1/chat/completions" \
 
 **Authentication**: Replace `${OPENAI_API_KEY}` with the value you set in your `.env` file.
 
-**For detailed vision model usage**: See [VISION_MODEL_USAGE.md](VISION_MODEL_USAGE.md) for comprehensive examples including multi-image requests, document intelligence, and troubleshooting.
-
 ### Monitoring Deployment Status
 
 ```bash
@@ -307,18 +303,7 @@ multimodal-kuberay/
 │   └── test-llm.sh             # LLM API test script
 ├── AGENTS.md                   # Detailed guide for AI coding agents
 └── README.md                   # This file
-```
-
-## Roadmap
-
-Future enhancements planned for this project:
-
-- [ ] Multi-modal model support (vision + language models)
-- [ ] Multiple concurrent models with intelligent routing
-- [ ] Horizontal autoscaling based on request load
-- [ ] Comprehensive monitoring and observability stack (Prometheus, Grafana)
-- [ ] CI/CD pipeline for automated testing and deployment
-- [ ] Support for additional cloud providers (AWS, GCP, Azure)
+``` 
 
 ## Troubleshooting
 
