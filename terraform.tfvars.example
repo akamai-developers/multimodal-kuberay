@@ -1,0 +1,26 @@
+# ============================================================================
+# REQUIRED VARIABLES
+# ============================================================================
+# Copy this file to terraform.tfvars and fill in your actual values
+# Note: HuggingFace token and API key are now configured in .env for Tilt
+
+linode_token       = "your-linode-api-token-here"
+
+# ============================================================================
+# CLUSTER CONFIGURATION
+# ============================================================================
+
+cluster_label      = "myllm"
+kubernetes_version = "1.34"
+region             = "us-sea"
+
+# GPU Node Pool Configuration
+# Options for gpu_node_type:
+#   - "g3-gpu-rtxpro6000-blackwell-2" (NVIDIA Blackwell - default)
+#   - "g2-gpu-rtx4000a4-m" (NVIDIA Ada)
+gpu_node_type      = "g3-gpu-rtxpro6000-blackwell-2"
+gpu_node_count     = 3
+
+# Resource tags for organization and cost tracking
+tags = ["kuberay", "llm", "gpu", "terraform"]
+

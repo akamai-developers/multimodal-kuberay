@@ -1,0 +1,108 @@
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: ray-serve-llm
+spec:
+  serveConfigV2: |
+    applications:
+    - name: llms
+      import_path: ray.serve.llm:build_openai_app
+      route_prefix: "/"
+      args:
+        llm_configs:
+        - model_loading_config:
+            model_id: qwen3-vl-8b-instruct
+            model_source: Qwen/Qwen3-VL-8B-Instruct
+          engine_kwargs:
+            dtype: bfloat16
+            max_model_len: 32768  # Native 256K, balanced for memory
+            gpu_memory_utilization: 0.80  # Conservative for vision overhead
+            tensor_parallel_size: 2  # Optimal for 8B model across 2 GPUs
+            disable_log_stats: false
+            trust_remote_code: true  # Required for Qwen3-VL
+            limit_mm_per_prompt:  # Dictionary format for multi-modal limits
+              image: 4
+              video: 1
+          deployment_config:
+            autoscaling_config:
+              min_replicas: 1
+              max_replicas: 2  # Can scale to 4 GPUs total
+              target_ongoing_requests: 32
+            max_ongoing_requests: 64
+#        - model_loading_config:
+#            model_id: nemotron-vl-12b
+#            model_source: nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16
+#          engine_kwargs:
+#            dtype: bfloat16
+#            max_model_len: 32768  # Native 128K, balanced for memory
+#            gpu_memory_utilization: 0.80  # Conservative for vision overhead
+#            tensor_parallel_size: 2  # Optimal for 12B model across 2 GPUs
+#            disable_log_stats: false
+#            trust_remote_code: true  # Required for vision models
+#            limit_mm_per_prompt:  # Dictionary format (FIXED from string)
+#              image: 4
+#              video: 1
+#          deployment_config:
+#            autoscaling_config:
+#              min_replicas: 1
+#              max_replicas: 2  # Can scale to 4 GPUs total
+#              target_ongoing_requests: 32
+#            max_ongoing_requests: 64
+  rayClusterConfig:
+    rayVersion: "2.54.0"
+    headGroupSpec:
+      rayStartParams:
+        num-cpus: "0"
+        num-gpus: "0"
+      template:
+        spec:
+          containers:
+            - name: ray-head
+              image: rayproject/ray-llm:2.54.0-py311-cu128
+              ports:
+                - containerPort: 8000
+                  name: serve
+                  protocol: TCP
+                - containerPort: 8080
+                  name: metrics
+                  protocol: TCP
+                - containerPort: 6379
+                  name: gcs
+                  protocol: TCP
+                - containerPort: 8265
+                  name: dashboard
+                  protocol: TCP
+                - containerPort: 10001
+                  name: client
+                  protocol: TCP
+              resources:
+                requests:
+                  cpu: 2
+                  memory: 4Gi
+    workerGroupSpecs:
+      - replicas: 3
+        minReplicas: 1
+        maxReplicas: 3
+        numOfHosts: 1
+        groupName: gpu-group
+        rayStartParams:
+          num-gpus: "2"
+        template:
+          spec:
+            containers:
+              - name: ray-worker
+                image: rayproject/ray-llm:2.54.0-py311-cu128
+                env:
+                  - name: HUGGING_FACE_HUB_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: hf-secret
+                        key: hf_token
+                resources:
+                  limits:
+                    memory: 64Gi
+                    nvidia.com/gpu: "2"
+                  requests:
+                    cpu: 16
+                    memory: 32Gi
+                    nvidia.com/gpu: "2"

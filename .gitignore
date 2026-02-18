@@ -1,0 +1,8 @@
+.idea
+.devbox
+.terraform
+.terraform.lock.hcl
+kubeconfig
+*kubeconfig
+.envrc
+*.tfstate
