@@ -216,11 +216,48 @@ k8s_resource(
     objects=[
     "llm-gateway:gateway",
     "llm-route:httproute",
+    "tts-route:httproute",
     "llm-gateway-auth:securitypolicy",
     "envoy:gatewayclass"
     ],
     resource_deps=["envoy-gateway", "llm-gateway-auth"],
     labels=["gateway"],
+)
+
+# ░▀█▀░▀█▀░█▀▀░░░█▀▀░█▀▀░█▀▄░█░█░▀█▀░█▀▀░█▀▀
+# ░░█░░░█░░▀▀█░░░▀▀█░█▀▀░█▀▄░▀▄▀░░█░░█░░░█▀▀
+# ░░▀░░░▀░░▀▀▀░░░▀▀▀░▀▀▀░▀░▀░░▀░░▀▀▀░▀▀▀░▀▀▀
+
+# TTS Serve Code ConfigMap — auto-updates when serve/tts_app.py changes
+tts_serve_code = str(read_file("serve/tts_app.py"))
+k8s_yaml(encode_yaml({
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+        "name": "tts-serve-code",
+        "namespace": "default",
+    },
+    "data": {
+        "tts_app.py": tts_serve_code,
+    },
+}))
+
+k8s_resource(
+    new_name="tts-serve-code",
+    objects=["tts-serve-code:configmap"],
+    labels=["tts"],
+)
+
+# TTS RayService
+k8s_yaml("manifests/rayservice-tts.yaml")
+k8s_resource(
+    new_name="tts-service",
+    objects=[
+        "ray-serve-tts:rayservice",
+    ],
+    resource_deps=["kuberay-operator", "hf-secret", "tts-serve-code"],
+    labels=["tts"],
+    port_forwards=["8266:8265", "8001:8000"],
 )
 
 # RayService

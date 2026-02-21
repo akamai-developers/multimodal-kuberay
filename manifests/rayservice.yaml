@@ -80,9 +80,9 @@ spec:
                   cpu: 2
                   memory: 4Gi
     workerGroupSpecs:
-      - replicas: 3
+      - replicas: 2
         minReplicas: 1
-        maxReplicas: 3
+        maxReplicas: 2
         numOfHosts: 1
         groupName: gpu-group
         rayStartParams:

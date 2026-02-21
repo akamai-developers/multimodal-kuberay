@@ -1,0 +1,99 @@
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: ray-serve-tts
+spec:
+  serveConfigV2: |
+    applications:
+    - name: tts
+      import_path: tts_app:deployment
+      route_prefix: "/"
+      runtime_env:
+        pip:
+          - "nemo_toolkit[tts] @ git+https://github.com/NVIDIA/NeMo.git@main"
+          - kaldialign
+          - soundfile
+        env_vars:
+          PYTHONPATH: "/home/ray/serve:$PYTHONPATH"
+  rayClusterConfig:
+    rayVersion: "2.54.0"
+    headGroupSpec:
+      rayStartParams:
+        num-cpus: "0"
+        num-gpus: "0"
+      template:
+        spec:
+          containers:
+            - name: ray-head
+              image: rayproject/ray:2.54.0-py311-cu128
+              env:
+                - name: PYTHONPATH
+                  value: "/home/ray/serve"
+              ports:
+                - containerPort: 8000
+                  name: serve
+                  protocol: TCP
+                - containerPort: 8080
+                  name: metrics
+                  protocol: TCP
+                - containerPort: 6379
+                  name: gcs
+                  protocol: TCP
+                - containerPort: 8265
+                  name: dashboard
+                  protocol: TCP
+                - containerPort: 10001
+                  name: client
+                  protocol: TCP
+              resources:
+                requests:
+                  cpu: 2
+                  memory: 4Gi
+              volumeMounts:
+                - name: serve-code
+                  mountPath: /home/ray/serve
+          volumes:
+            - name: serve-code
+              configMap:
+                name: tts-serve-code
+    workerGroupSpecs:
+      - replicas: 1
+        minReplicas: 1
+        maxReplicas: 2
+        numOfHosts: 1
+        groupName: tts-gpu-group
+        rayStartParams:
+          num-gpus: "1"
+        template:
+          spec:
+            containers:
+              - name: ray-worker
+                image: rayproject/ray:2.54.0-py311-cu128
+                env:
+                  - name: PYTHONPATH
+                    value: "/home/ray/serve"
+                  - name: HUGGING_FACE_HUB_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: hf-secret
+                        key: hf_token
+                  - name: HF_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: hf-secret
+                        key: hf_token
+                resources:
+                  limits:
+                    memory: 16Gi
+                    nvidia.com/gpu: "1"
+                  requests:
+                    cpu: 4
+                    memory: 8Gi
+                    nvidia.com/gpu: "1"
+                volumeMounts:
+                  - name: serve-code
+                    mountPath: /home/ray/serve
+            volumes:
+              - name: serve-code
+                configMap:
+                  name: tts-serve-code
