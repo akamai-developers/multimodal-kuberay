@@ -86,7 +86,7 @@ class SpeechRequest(BaseModel):
     )
     speed: float = Field(
         default=1.0, ge=0.25, le=4.0,
-        description="Speed (reserved, not yet supported)",
+        description="Speech speed multiplier (1.0 = normal)",
     )
     language: Optional[str] = Field(
         default="en", description="Language: en|es|de|fr|vi|it|zh"
@@ -116,6 +116,10 @@ class DescribeAndSpeakRequest(BaseModel):
     max_tokens: int = Field(
         default=512, ge=1, le=4096,
         description="Max tokens for VLM response",
+    )
+    speed: float = Field(
+        default=1.0, ge=0.25, le=4.0,
+        description="Speech speed multiplier (1.0 = normal)",
     )
 
 
@@ -209,6 +213,7 @@ class MagpieTTSDeployment:
         audio_np = audio.cpu().numpy().flatten()
         if audio_len is not None:
             audio_np = audio_np[: int(audio_len)]
+        audio_np = self._apply_speed(audio_np, request.speed)
 
         if request.response_format == "pcm":
             pcm = (audio_np * 32767).astype(np.int16).tobytes()
@@ -277,6 +282,7 @@ class MagpieTTSDeployment:
         audio_np = audio.cpu().numpy().flatten()
         if audio_len is not None:
             audio_np = audio_np[: int(audio_len)]
+        audio_np = self._apply_speed(audio_np, request.speed)
 
         if request.response_format == "pcm":
             pcm = (audio_np * 32767).astype(np.int16).tobytes()
@@ -298,6 +304,21 @@ class MagpieTTSDeployment:
     # Audio encoding
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _apply_speed(audio_np: np.ndarray, speed: float) -> np.ndarray:
+        """Adjust playback speed via linear interpolation.
+
+        speed > 1.0 → faster/shorter, speed < 1.0 → slower/longer.
+        This is a simple resample that shifts pitch proportionally,
+        which sounds natural for commentary at speeds up to ~1.5x.
+        """
+        if abs(speed - 1.0) < 0.01:
+            return audio_np
+        orig_len = len(audio_np)
+        new_len = max(1, int(orig_len / speed))
+        indices = np.linspace(0, orig_len - 1, new_len)
+        return np.interp(indices, np.arange(orig_len), audio_np).astype(np.float32)
+
     def _to_wav_bytes(self, audio_np: np.ndarray) -> bytes:
         """Encode float32 audio array to WAV bytes."""
         import soundfile as sf
@@ -307,7 +328,8 @@ class MagpieTTSDeployment:
         return buf.getvalue()
 
     async def _synthesize_and_send(
-        self, websocket: WebSocket, text: str, language: str, speaker_idx: int
+        self, websocket: WebSocket, text: str, language: str, speaker_idx: int,
+        speed: float = 1.0,
     ) -> None:
         """TTS a text chunk and send the audio over WebSocket."""
         loop = asyncio.get_running_loop()
@@ -317,6 +339,7 @@ class MagpieTTSDeployment:
         audio_np = audio.cpu().numpy().flatten()
         if audio_len is not None:
             audio_np = audio_np[: int(audio_len)]
+        audio_np = self._apply_speed(audio_np, speed)
         await websocket.send_bytes(self._to_wav_bytes(audio_np))
 
     # ------------------------------------------------------------------
@@ -346,9 +369,10 @@ class MagpieTTSDeployment:
         voice = "alloy"
         language = "en"
         max_tokens = 80
+        speed = 1.0
         prompt = (
             "You are a live commentator. Describe what is happening "
-            "in this camera frame in 1-2 short, energetic sentences. "
+            "in this camera frame in 1 short, energetic sentence. "
             "Be concise — this will be spoken aloud."
         )
 
@@ -369,6 +393,7 @@ class MagpieTTSDeployment:
                         voice = cfg.get("voice", voice)
                         language = cfg.get("language", language)
                         max_tokens = cfg.get("max_tokens", max_tokens)
+                        speed = cfg.get("speed", speed)
                         prompt = cfg.get("prompt", prompt)
                         logger.info(
                             "[ws-stream] Config: model=%s voice=%s", model, voice
@@ -464,7 +489,8 @@ class MagpieTTSDeployment:
                                     "type": "text", "content": sentence,
                                 }))
                                 await self._synthesize_and_send(
-                                    websocket, sentence, lang, speaker_idx
+                                    websocket, sentence, lang, speaker_idx,
+                                    speed=speed,
                                 )
 
                     # Flush remaining text
@@ -474,7 +500,8 @@ class MagpieTTSDeployment:
                             "type": "text", "content": remaining,
                         }))
                         await self._synthesize_and_send(
-                            websocket, remaining, lang, speaker_idx
+                            websocket, remaining, lang, speaker_idx,
+                            speed=speed,
                         )
 
                     await websocket.send_text(json.dumps({"type": "done"}))

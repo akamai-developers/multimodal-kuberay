@@ -93,6 +93,7 @@ class Config:
         self.language: str = args.language
         self.max_tokens: int = args.max_tokens
         self.interval: float = args.interval
+        self.speed: float = args.speed
         self.camera: int = args.camera
         self.preview: bool = not args.headless
         self.offline: bool = args.offline
@@ -126,6 +127,10 @@ def log_error(tag: str, msg: str) -> None:
 # Audio helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Fade ramp length in samples — applied at the start and end of each chunk
+# to eliminate the click/pop artifacts from abrupt waveform discontinuities.
+_FADE_SAMPLES = 256
+
 
 def wav_bytes_to_numpy(data: bytes) -> tuple[np.ndarray, int]:
     """Parse WAV bytes into (float32 samples, sample_rate)."""
@@ -147,9 +152,24 @@ def wav_bytes_to_numpy(data: bytes) -> tuple[np.ndarray, int]:
     samples /= float(np.iinfo(dtype).max)
 
     if n_channels > 1:
-        samples = samples.reshape(-1, n_channels)
+        # Mix to mono for consistent playback
+        samples = samples.reshape(-1, n_channels).mean(axis=1)
 
     return samples, sample_rate
+
+
+def _apply_fade(samples: np.ndarray, fade_len: int = _FADE_SAMPLES) -> np.ndarray:
+    """Apply a short linear fade-in and fade-out to avoid click artifacts."""
+    n = len(samples)
+    if n < fade_len * 2:
+        fade_len = n // 4  # very short clip — use a quarter
+    if fade_len < 2:
+        return samples
+    out = samples.copy()
+    ramp = np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
+    out[:fade_len] *= ramp
+    out[-fade_len:] *= ramp[::-1]
+    return out
 
 
 def generate_test_tone(duration: float = 1.5, freq: float = 440.0,
@@ -261,6 +281,7 @@ def infer_thread(
     frame_queue: queue.Queue,
     audio_queue: queue.Queue,
     stop_event: threading.Event,
+    latency_info: dict | None = None,
 ) -> None:
     """Take frames from the queue, call /v1/audio/describe, push audio."""
     headers = {"Content-Type": "application/json"}
@@ -302,7 +323,7 @@ def infer_thread(
                     {"type": "text", "text": (
                         "You are a live sports-style commentator. "
                         "Describe what is happening in this camera frame "
-                        "in 1-2 short, energetic sentences. Be concise "
+                        "in 1 short, energetic sentence. Be concise "
                         "and engaging — this will be spoken aloud."
                     )},
                 ],
@@ -314,10 +335,14 @@ def infer_thread(
                 "voice": cfg.voice,
                 "language": cfg.language,
                 "max_tokens": cfg.max_tokens,
+                "speed": cfg.speed,
                 "response_format": "wav",
             }
 
             t0 = time.monotonic()
+            if latency_info is not None:
+                latency_info["frame_sent"] = t0
+                latency_info["first_audio"] = 0.0
             try:
                 resp = client.post(url, json=payload)
                 elapsed = time.monotonic() - t0
@@ -337,6 +362,16 @@ def infer_thread(
 
                 audio_queue.put((samples, sr, vlm_text))
 
+                # Update latency metrics for preview overlay
+                if latency_info is not None:
+                    now = time.monotonic()
+                    latency_info["first_audio"] = now
+                    latency_info["ttfa_ms"] = elapsed * 1000
+                    latency_info["all_done"] = now
+                    latency_info["total_ms"] = elapsed * 1000
+                    latency_info["chunks"] = 1
+                    latency_info["text"] = vlm_text[:60]
+
             except httpx.TimeoutException:
                 log_error("infer", f"Request timed out after {cfg.timeout}s")
             except httpx.RequestError as exc:
@@ -353,27 +388,82 @@ def playback_thread(
     audio_queue: queue.Queue,
     stop_event: threading.Event,
 ) -> None:
-    """Play audio clips as they arrive."""
+    """Play audio clips through a persistent OutputStream.
+
+    Using a single, long-lived OutputStream avoids the clicks and pops
+    that come from opening/closing a new stream for every sentence chunk.
+    Each chunk gets a short fade-in/out ramp to smooth transitions.
+    Audio is written in small slices so we can bail quickly on shutdown.
+    """
     log("playback", "Ready")
 
-    while not stop_event.is_set():
-        try:
-            item = audio_queue.get(timeout=1.0)
-        except queue.Empty:
-            continue
+    stream: sd.OutputStream | None = None
+    current_sr: int = 0
 
-        if item is _STOP:
-            break
+    # Write in slices of ~50 ms so stop_event is checked frequently.
+    SLICE_DURATION = 0.05  # seconds
 
-        samples, sr, text = item
-        duration = len(samples) / sr
-        log("playback", f"Playing {duration:.1f}s clip...")
+    def _ensure_stream(sr: int) -> sd.OutputStream:
+        nonlocal stream, current_sr
+        if stream is not None and current_sr == sr:
+            return stream
+        # Close old stream if sample rate changed
+        if stream is not None:
+            try:
+                stream.abort()
+                stream.close()
+            except Exception:
+                pass
+        stream = sd.OutputStream(
+            samplerate=sr,
+            channels=1,
+            dtype="float32",
+            blocksize=1024,
+        )
+        stream.start()
+        current_sr = sr
+        log("playback", f"Opened audio stream @ {sr} Hz")
+        return stream
 
-        try:
-            sd.play(samples, samplerate=sr)
-            sd.wait()
-        except Exception as exc:
-            log_error("playback", f"Playback error: {exc}")
+    try:
+        while not stop_event.is_set():
+            try:
+                item = audio_queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+
+            if item is _STOP:
+                break
+
+            samples, sr, text = item
+            duration = len(samples) / sr
+            log("playback", f"Playing {duration:.1f}s clip...")
+
+            try:
+                out = _ensure_stream(sr)
+                # Apply fade ramps to prevent inter-chunk clicks
+                smoothed = _apply_fade(samples)
+                data = smoothed.reshape(-1, 1)
+
+                # Write in small slices so we can abort quickly on shutdown
+                slice_frames = max(1, int(sr * SLICE_DURATION))
+                offset = 0
+                while offset < len(data) and not stop_event.is_set():
+                    end = min(offset + slice_frames, len(data))
+                    out.write(data[offset:end])
+                    offset = end
+            except Exception as exc:
+                log_error("playback", f"Playback error: {exc}")
+                # Reset stream on error so it reopens next time
+                stream = None
+                current_sr = 0
+    finally:
+        if stream is not None:
+            try:
+                stream.abort()  # abort immediately, don't drain
+                stream.close()
+            except Exception:
+                pass
 
     log("playback", "Stopped")
 
@@ -388,6 +478,7 @@ def ws_infer_thread(
     frame_queue: queue.Queue,
     audio_queue: queue.Queue,
     stop_event: threading.Event,
+    latency_info: dict | None = None,
 ) -> None:
     """WebSocket mode: persistent connection, sentence-level audio chunks."""
     if not _HAS_WEBSOCKET:
@@ -408,6 +499,7 @@ def ws_infer_thread(
         "voice": cfg.voice,
         "language": cfg.language,
         "max_tokens": cfg.max_tokens,
+        "speed": cfg.speed,
     })
 
     while not stop_event.is_set():
@@ -415,7 +507,7 @@ def ws_infer_thread(
         try:
             log("ws", "Connecting...")
             ws = _ws_mod.WebSocket()
-            ws.settimeout(cfg.timeout)
+            ws.settimeout(5.0)  # short timeout so recv unblocks for shutdown checks
             ws.connect(ws_url, header=headers)
             log("ws", "Connected")
 
@@ -427,7 +519,7 @@ def ws_infer_thread(
             # Main loop: send frames, receive audio chunks
             while not stop_event.is_set():
                 try:
-                    frame = frame_queue.get(timeout=1.0)
+                    frame = frame_queue.get(timeout=0.5)
                 except queue.Empty:
                     continue
 
@@ -445,41 +537,65 @@ def ws_infer_thread(
                     frame, cfg.max_width, cfg.jpeg_quality
                 )
                 t0 = time.monotonic()
+                if latency_info is not None:
+                    latency_info["frame_sent"] = t0
+                    latency_info["first_audio"] = 0.0
                 ws.send(jpeg_bytes, opcode=_ws_mod.ABNF.OPCODE_BINARY)
+
+                # Use a longer timeout while waiting for VLM response,
+                # then restore a short one so the outer loop checks stop_event.
+                ws.settimeout(cfg.timeout)
 
                 # Receive sentence-level audio chunks until "done"
                 vlm_text_parts = []
                 chunk_count = 0
-                while True:
-                    opcode, data = ws.recv_data()
+                try:
+                    while not stop_event.is_set():
+                        opcode, data = ws.recv_data()
 
-                    if opcode == _ws_mod.ABNF.OPCODE_TEXT:
-                        msg = json.loads(data)
-                        msg_type = msg.get("type", "")
+                        if opcode == _ws_mod.ABNF.OPCODE_TEXT:
+                            msg = json.loads(data)
+                            msg_type = msg.get("type", "")
 
-                        if msg_type == "done":
-                            elapsed = time.monotonic() - t0
-                            full_text = " ".join(vlm_text_parts)
-                            log("ws",
-                                f"{chunk_count} audio chunks in {elapsed:.1f}s"
-                                f" | {full_text[:80]}")
-                            break
+                            if msg_type == "done":
+                                elapsed = time.monotonic() - t0
+                                full_text = " ".join(vlm_text_parts)
+                                log("ws",
+                                    f"{chunk_count} audio chunks in {elapsed:.1f}s"
+                                    f" | {full_text[:80]}")
+                                if latency_info is not None:
+                                    latency_info["all_done"] = time.monotonic()
+                                    latency_info["total_ms"] = elapsed * 1000
+                                    latency_info["chunks"] = chunk_count
+                                    latency_info["text"] = full_text[:60]
+                                break
 
-                        elif msg_type == "text":
-                            vlm_text_parts.append(msg.get("content", ""))
+                            elif msg_type == "text":
+                                vlm_text_parts.append(msg.get("content", ""))
 
-                        elif msg_type == "error":
-                            log_error("ws", msg.get("detail", "unknown error"))
-                            break
+                            elif msg_type == "error":
+                                log_error("ws", msg.get("detail", "unknown error"))
+                                break
 
-                    elif opcode == _ws_mod.ABNF.OPCODE_BINARY:
-                        # WAV audio chunk — queue for immediate playback
-                        chunk_count += 1
-                        try:
-                            samples, sr = wav_bytes_to_numpy(data)
-                            audio_queue.put((samples, sr, ""))
-                        except Exception as exc:
-                            log_error("ws", f"Bad audio chunk: {exc}")
+                        elif opcode == _ws_mod.ABNF.OPCODE_BINARY:
+                            # WAV audio chunk — queue for immediate playback
+                            chunk_count += 1
+                            now = time.monotonic()
+                            if chunk_count == 1 and latency_info is not None:
+                                latency_info["first_audio"] = now
+                                latency_info["ttfa_ms"] = (now - t0) * 1000
+                            try:
+                                samples, sr = wav_bytes_to_numpy(data)
+                                audio_queue.put((samples, sr, ""))
+                            except Exception as exc:
+                                log_error("ws", f"Bad audio chunk: {exc}")
+                finally:
+                    # Restore short timeout so the frame-get loop
+                    # can detect stop_event quickly.
+                    try:
+                        ws.settimeout(5.0)
+                    except Exception:
+                        pass
 
         except _ws_mod.WebSocketException as exc:
             log_error("ws", f"WebSocket error: {exc}")
@@ -496,7 +612,11 @@ def ws_infer_thread(
 
         if not stop_event.is_set():
             log("ws", "Reconnecting in 3s...")
-            time.sleep(3)
+            # Interruptible sleep — check stop_event every 0.5s
+            for _ in range(6):
+                if stop_event.is_set():
+                    break
+                time.sleep(0.5)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -505,10 +625,26 @@ def ws_infer_thread(
 
 
 def show_preview(latest_frame: list, stop_event: threading.Event,
+                 latency_info: dict | None = None,
                  preview_width: int = 960) -> None:
-    """Display the webcam feed with an overlay. Runs on the main thread."""
+    """Display the webcam feed with a latency HUD overlay."""
     WINDOW = "Live Commentary"
     cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+
+    FONT = cv2.FONT_HERSHEY_SIMPLEX
+    WHITE = (255, 255, 255)
+    GREEN = (0, 255, 0)
+    YELLOW = (0, 255, 255)
+    RED = (0, 0, 255)
+    GREY = (200, 200, 200)
+    BG = (0, 0, 0)
+
+    def _put_bg_text(img, text, org, scale, color, thickness=1):
+        """Draw text with a dark background rectangle for readability."""
+        (tw, th), baseline = cv2.getTextSize(text, FONT, scale, thickness)
+        x, y = org
+        cv2.rectangle(img, (x - 2, y - th - 4), (x + tw + 4, y + baseline + 2), BG, -1)
+        cv2.putText(img, text, org, FONT, scale, color, thickness, cv2.LINE_AA)
 
     while not stop_event.is_set():
         frame = latest_frame[0]
@@ -523,11 +659,47 @@ def show_preview(latest_frame: list, stop_event: threading.Event,
         else:
             display = frame.copy()
 
-        # Overlay status text
-        cv2.putText(display, "LIVE COMMENTARY", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-        cv2.putText(display, "Press 'q' to quit", (10, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+        dh, dw = display.shape[:2]
+        y_cursor = 30
+
+        # Title
+        _put_bg_text(display, "LIVE COMMENTARY", (10, y_cursor), 0.7, RED, 2)
+        y_cursor += 30
+
+        # Latency HUD
+        if latency_info is not None:
+            ttfa = latency_info.get("ttfa_ms", 0.0)
+            total = latency_info.get("total_ms", 0.0)
+            chunks = latency_info.get("chunks", 0)
+            text_snip = latency_info.get("text", "")
+
+            if total > 0:
+                # Color-code TTFA: green < 2s, yellow < 4s, red >= 4s
+                ttfa_color = GREEN if ttfa < 2000 else (YELLOW if ttfa < 4000 else RED)
+                total_color = GREEN if total < 4000 else (YELLOW if total < 8000 else RED)
+
+                _put_bg_text(display,
+                             f"TTFA: {ttfa/1000:.2f}s",
+                             (10, y_cursor), 0.55, ttfa_color)
+                y_cursor += 24
+
+                _put_bg_text(display,
+                             f"Total: {total/1000:.2f}s  ({chunks} chunks)",
+                             (10, y_cursor), 0.55, total_color)
+                y_cursor += 24
+
+                if text_snip:
+                    _put_bg_text(display,
+                                 text_snip[:55] + ("..." if len(text_snip) > 55 else ""),
+                                 (10, y_cursor), 0.4, WHITE)
+                    y_cursor += 20
+            else:
+                _put_bg_text(display, "Waiting for first response...",
+                             (10, y_cursor), 0.5, GREY)
+                y_cursor += 24
+
+        # Quit hint (bottom-left)
+        _put_bg_text(display, "Press 'q' to quit", (10, dh - 12), 0.4, GREY)
 
         cv2.imshow(WINDOW, display)
 
@@ -572,8 +744,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                    help="TTS voice (default: alloy / Sofia)")
     p.add_argument("--language", default="en",
                    help="TTS language code (default: en)")
-    p.add_argument("--max-tokens", type=int, default=80,
-                   help="Max tokens for VLM response (default: 80)")
+    p.add_argument("--max-tokens", type=int, default=50,
+                   help="Max tokens for VLM response (default: 50)")
+    p.add_argument("--speed", type=float, default=1.1,
+                   help="TTS speech speed multiplier (default: 1.1)")
 
     # Capture
     p.add_argument("--camera", type=int, default=0,
@@ -621,6 +795,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     log("main", f"  Mode     : {cfg.mode}")
     log("main", f"  Model    : {cfg.model}")
     log("main", f"  Voice    : {cfg.voice} ({cfg.language})")
+    log("main", f"  Speed    : {cfg.speed}x")
     log("main", f"  Interval : {cfg.interval}s")
     log("main", f"  Camera   : {cfg.camera}")
     log("main", f"  Offline  : {cfg.offline}")
@@ -631,6 +806,18 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     frame_queue: queue.Queue = queue.Queue(maxsize=2)   # pending inference
     audio_queue: queue.Queue = queue.Queue(maxsize=5)   # pending playback
     latest_frame: list = [None]  # mutable container for preview
+
+    # Latency metrics shared between inference and preview threads.
+    # Keys: "frame_sent", "first_audio", "all_done", "chunks"
+    latency_info: dict = {
+        "frame_sent": 0.0,      # monotonic time when frame was sent
+        "first_audio": 0.0,    # monotonic time when first audio chunk arrived
+        "all_done": 0.0,       # monotonic time when "done" received
+        "chunks": 0,           # audio chunks in the last response
+        "ttfa_ms": 0.0,        # time-to-first-audio (ms)
+        "total_ms": 0.0,       # total round-trip (ms)
+        "text": "",            # last VLM text snippet
+    }
 
     # Graceful shutdown on Ctrl+C
     def on_signal(signum, _frame):
@@ -656,7 +843,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         infer_fn = infer_thread
 
     t_inf = threading.Thread(target=infer_fn, name="infer",
-                             args=(cfg, frame_queue, audio_queue, stop_event),
+                             args=(cfg, frame_queue, audio_queue, stop_event,
+                                   latency_info),
                              daemon=True)
     t_inf.start()
     threads.append(t_inf)
@@ -669,7 +857,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     # Run preview on the main thread (OpenCV requires it on macOS)
     if cfg.preview:
-        show_preview(latest_frame, stop_event)
+        show_preview(latest_frame, stop_event, latency_info=latency_info)
     else:
         # Headless: just wait for stop signal
         log("main", "Running headless. Press Ctrl+C to stop.")
@@ -681,11 +869,21 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     # Clean shutdown
     stop_event.set()
+
+    # Drain queues so blocked put() calls unblock, then push sentinels
+    for q in (frame_queue, audio_queue):
+        try:
+            while not q.empty():
+                q.get_nowait()
+        except Exception:
+            pass
     frame_queue.put(_STOP)
     audio_queue.put(_STOP)
 
     for t in threads:
-        t.join(timeout=5.0)
+        t.join(timeout=3.0)
+        if t.is_alive():
+            log("main", f"Thread '{t.name}' did not exit in time")
 
     log("main", "Done.")
 
