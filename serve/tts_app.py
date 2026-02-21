@@ -12,15 +12,18 @@ Languages: en, es, de, fr, vi, it, zh
 """
 
 import asyncio
+import base64
 import io
+import json
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 import httpx
 import numpy as np
 import torch
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from ray import serve
@@ -63,6 +66,9 @@ LANGUAGE_TOKENIZER_MAP = {
     "vi": ["vietnamese_phoneme", "vietnamese"],
     "zh": ["mandarin_phoneme", "mandarin", "chinese"],
 }
+
+# Regex: find the last sentence boundary (punctuation followed by whitespace)
+_SENTENCE_BOUNDARY = re.compile(r'[.!?]\s')
 
 
 class SpeechRequest(BaseModel):
@@ -289,6 +295,214 @@ class MagpieTTSDeployment:
         )
 
     # ------------------------------------------------------------------
+    # Audio encoding
+    # ------------------------------------------------------------------
+
+    def _to_wav_bytes(self, audio_np: np.ndarray) -> bytes:
+        """Encode float32 audio array to WAV bytes."""
+        import soundfile as sf
+
+        buf = io.BytesIO()
+        sf.write(buf, audio_np, self.sample_rate, format="WAV")
+        return buf.getvalue()
+
+    async def _synthesize_and_send(
+        self, websocket: WebSocket, text: str, language: str, speaker_idx: int
+    ) -> None:
+        """TTS a text chunk and send the audio over WebSocket."""
+        loop = asyncio.get_running_loop()
+        audio, audio_len = await loop.run_in_executor(
+            None, self._synthesize, text, language, speaker_idx
+        )
+        audio_np = audio.cpu().numpy().flatten()
+        if audio_len is not None:
+            audio_np = audio_np[: int(audio_len)]
+        await websocket.send_bytes(self._to_wav_bytes(audio_np))
+
+    # ------------------------------------------------------------------
+    # WebSocket streaming endpoint
+    # ------------------------------------------------------------------
+
+    @app.websocket("/v1/audio/stream")
+    async def stream_commentary(self, websocket: WebSocket):
+        """Low-latency streaming: receive frames, stream audio commentary.
+
+        Protocol
+        --------
+        Client → Server:
+          text   : JSON config {"voice","language","model","max_tokens","prompt"}
+          binary : JPEG frame bytes
+
+        Server → Client:
+          text   : JSON {"type":"text",  "content":"..."} — VLM sentence chunk
+          text   : JSON {"type":"done"}                  — end of this frame
+          text   : JSON {"type":"error", "detail":"..."}  — non-fatal error
+          binary : WAV audio for the preceding text chunk
+        """
+        await websocket.accept()
+
+        # Tunables (client can override via a text config message)
+        model = "qwen3-vl-8b-instruct"
+        voice = "alloy"
+        language = "en"
+        max_tokens = 80
+        prompt = (
+            "You are a live commentator. Describe what is happening "
+            "in this camera frame in 1-2 short, energetic sentences. "
+            "Be concise — this will be spoken aloud."
+        )
+
+        logger.info("[ws-stream] Client connected")
+
+        try:
+            while True:
+                message = await websocket.receive()
+
+                if message.get("type") == "websocket.disconnect":
+                    break
+
+                # --- Config message (text JSON) ---
+                if "text" in message:
+                    try:
+                        cfg = json.loads(message["text"])
+                        model = cfg.get("model", model)
+                        voice = cfg.get("voice", voice)
+                        language = cfg.get("language", language)
+                        max_tokens = cfg.get("max_tokens", max_tokens)
+                        prompt = cfg.get("prompt", prompt)
+                        logger.info(
+                            "[ws-stream] Config: model=%s voice=%s", model, voice
+                        )
+                        await websocket.send_text(
+                            json.dumps({"type": "config_ack"})
+                        )
+                    except json.JSONDecodeError:
+                        await websocket.send_text(
+                            json.dumps({"type": "error", "detail": "Invalid JSON"})
+                        )
+                    continue
+
+                # --- JPEG frame (binary) ---
+                if "bytes" not in message:
+                    continue
+
+                frame_bytes = message["bytes"]
+                b64 = base64.b64encode(frame_bytes).decode("ascii")
+                data_uri = f"data:image/jpeg;base64,{b64}"
+
+                speaker_idx = VOICE_MAP.get(voice.lower(), 1)
+                lang = language if language in SUPPORTED_LANGUAGES else "en"
+
+                vlm_messages = [
+                    {"role": "system", "content": "/no_think"},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": data_uri}},
+                            {"type": "text", "text": prompt},
+                        ],
+                    },
+                ]
+
+                vlm_payload = {
+                    "model": model,
+                    "messages": vlm_messages,
+                    "max_tokens": max_tokens,
+                    "stream": True,
+                }
+
+                try:
+                    accumulated = ""
+
+                    async with self._vlm_client.stream(
+                        "POST", "/v1/chat/completions", json=vlm_payload
+                    ) as vlm_resp:
+                        if vlm_resp.status_code != 200:
+                            body = await vlm_resp.aread()
+                            detail = f"VLM HTTP {vlm_resp.status_code}: {body.decode(errors='replace')[:300]}"
+                            logger.error("[ws-stream] %s", detail)
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "detail": detail,
+                            }))
+                            continue
+
+                        async for line in vlm_resp.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            chunk_str = line[6:].strip()
+                            if chunk_str == "[DONE]":
+                                break
+
+                            try:
+                                chunk = json.loads(chunk_str)
+                            except json.JSONDecodeError:
+                                continue
+
+                            delta = (
+                                chunk.get("choices", [{}])[0]
+                                .get("delta", {})
+                            )
+                            content = delta.get("content", "")
+                            if not content:
+                                continue
+
+                            accumulated += content
+
+                            # Split at the *last* sentence boundary so we
+                            # flush as many complete sentences as possible
+                            # while keeping any trailing fragment.
+                            matches = list(
+                                _SENTENCE_BOUNDARY.finditer(accumulated)
+                            )
+                            if matches:
+                                split_at = matches[-1].end()
+                                sentence = accumulated[:split_at].strip()
+                                accumulated = accumulated[split_at:]
+
+                                await websocket.send_text(json.dumps({
+                                    "type": "text", "content": sentence,
+                                }))
+                                await self._synthesize_and_send(
+                                    websocket, sentence, lang, speaker_idx
+                                )
+
+                    # Flush remaining text
+                    remaining = accumulated.strip()
+                    if remaining:
+                        await websocket.send_text(json.dumps({
+                            "type": "text", "content": remaining,
+                        }))
+                        await self._synthesize_and_send(
+                            websocket, remaining, lang, speaker_idx
+                        )
+
+                    await websocket.send_text(json.dumps({"type": "done"}))
+
+                except httpx.TimeoutException:
+                    logger.error("[ws-stream] VLM timeout")
+                    await websocket.send_text(json.dumps({
+                        "type": "error", "detail": "VLM request timed out",
+                    }))
+                except httpx.RequestError as exc:
+                    detail = f"VLM connection error: {type(exc).__name__}: {exc}"
+                    logger.error("[ws-stream] %s", detail)
+                    await websocket.send_text(json.dumps({
+                        "type": "error", "detail": detail,
+                    }))
+                except Exception as exc:
+                    detail = f"Frame processing error: {type(exc).__name__}: {exc}"
+                    logger.error("[ws-stream] %s", detail, exc_info=True)
+                    await websocket.send_text(json.dumps({
+                        "type": "error", "detail": detail,
+                    }))
+
+        except WebSocketDisconnect:
+            logger.info("[ws-stream] Client disconnected")
+        except Exception as exc:
+            logger.error("[ws-stream] Unexpected error: %s", exc)
+
+    # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
 
@@ -342,7 +556,14 @@ class MagpieTTSDeployment:
                     "object": "model",
                     "owned_by": "nvidia",
                     "type": "tts",
-                }
+                },
+                {
+                    "id": "magpie-tts-stream",
+                    "object": "model",
+                    "owned_by": "nvidia",
+                    "type": "tts-stream",
+                    "description": "WebSocket streaming via /v1/audio/stream",
+                },
             ],
         }
 

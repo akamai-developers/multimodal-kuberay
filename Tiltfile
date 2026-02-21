@@ -218,6 +218,8 @@ k8s_resource(
     "llm-route:httproute",
     "tts-route:httproute",
     "llm-gateway-auth:securitypolicy",
+    "llm-gateway-client-policy:clienttrafficpolicy",
+    "tts-backend-policy:backendtrafficpolicy",
     "envoy:gatewayclass"
     ],
     resource_deps=["envoy-gateway", "llm-gateway-auth"],

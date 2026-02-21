@@ -73,3 +73,39 @@ spec:
   authorization:
     defaultAction: Deny
     # default to deny all requests, the auth section is added by our Tiltfile.
+---
+# Extend client-side idle & stream timeouts for long-lived WebSocket sessions.
+# Without this, Envoy kills idle connections after ~5 minutes.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: llm-gateway-client-policy
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: llm-gateway
+  timeout:
+    http:
+      idleTimeout: "3600s"         # 1 hour — keep WebSocket alive during pauses
+      streamIdleTimeout: "1800s"   # 30 min — idle timeout per stream
+---
+# Backend-side: keep connections to Ray Serve alive for long-running streams
+# and ensure the WebSocket upgrade type is explicitly enabled.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: tts-backend-policy
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: tts-route
+  timeout:
+    http:
+      connectionIdleTimeout: "3600s"   # 1 hour — match client-side
+      maxConnectionDuration: "7200s"   # 2 hours — hard cap
+  httpUpgrade:
+    - type: websocket
