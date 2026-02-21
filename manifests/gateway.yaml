@@ -36,6 +36,9 @@ spec:
     backendRefs:
     - name: ray-serve-llm-serve-svc
       port: 8000
+    timeouts:
+      request: "180s"
+      backendRequest: "180s"
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -53,6 +56,9 @@ spec:
     backendRefs:
     - name: ray-serve-tts-serve-svc
       port: 8000
+    timeouts:
+      request: "180s"  # VLM→TTS pipeline needs more than the 15s default
+      backendRequest: "180s"
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy

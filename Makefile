@@ -4,7 +4,7 @@
 # This Makefile provides convenient targets for managing the infrastructure
 # and deployment lifecycle.
 
-.PHONY: help init plan apply destroy kubeconfig up ci down status test test-vision test-tts clean all
+.PHONY: help init plan apply destroy kubeconfig up ci down status test test-vision test-tts test-pipeline clean all
 
 # Default target - show help
 help:
@@ -27,6 +27,7 @@ help:
 	@echo "  make test        - Run text-only API test (both models)"
 	@echo "  make test-vision - Run vision-language API test (both models)"
 	@echo "  make test-tts    - Run TTS API test"
+	@echo "  make test-pipeline - Run VLM→TTS pipeline test"
 	@echo "  make clean       - Clean local terraform and kubeconfig files"
 	@echo ""
 	@echo "Workflows:"
@@ -137,6 +138,14 @@ test-tts:
 	fi
 	@echo "Running TTS API test..."
 	@KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} ./scripts/test-tts.sh
+
+test-pipeline:
+	@if [ ! -f scripts/test-pipeline.sh ]; then \
+		echo "ERROR: scripts/test-pipeline.sh not found"; \
+		exit 1; \
+	fi
+	@echo "Running VLM→TTS pipeline test..."
+	@KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} ./scripts/test-pipeline.sh
 
 clean:
 	@echo "Cleaning up local files..."
