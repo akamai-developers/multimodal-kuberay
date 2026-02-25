@@ -8,6 +8,16 @@ spec:
     - name: tts
       import_path: tts_app:deployment
       route_prefix: "/"
+      deployments:
+      - name: MagpieTTSDeployment
+        autoscaling_config:
+          min_replicas: 2
+          max_replicas: 2
+          target_ongoing_requests: 4
+        max_ongoing_requests: 8
+        ray_actor_options:
+          num_gpus: 1
+          num_cpus: 4
       runtime_env:
         pip:
           - "nemo_toolkit[tts] @ git+https://github.com/NVIDIA/NeMo.git@main"
@@ -58,8 +68,8 @@ spec:
               configMap:
                 name: tts-serve-code
     workerGroupSpecs:
-      - replicas: 1
-        minReplicas: 1
+      - replicas: 2
+        minReplicas: 2
         maxReplicas: 2
         numOfHosts: 1
         groupName: tts-gpu-group

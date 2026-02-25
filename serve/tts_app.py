@@ -126,7 +126,7 @@ class DescribeAndSpeakRequest(BaseModel):
 @serve.deployment(
     ray_actor_options={"num_gpus": 1, "num_cpus": 4},
     autoscaling_config={
-        "min_replicas": 1,
+        "min_replicas": 2,
         "max_replicas": 2,
         "target_ongoing_requests": 4,
     },
@@ -294,10 +294,12 @@ class MagpieTTSDeployment:
         sf.write(buf, audio_np, self.sample_rate, format="WAV")
         buf.seek(0)
 
+        # HTTP headers must be latin-1 safe; strip non-ASCII chars
+        safe_text = text[:200].encode("ascii", errors="replace").decode("ascii")
         return Response(
             content=buf.read(),
             media_type="audio/wav",
-            headers={"X-VLM-Text": text[:200]},  # Include VLM text in header
+            headers={"X-VLM-Text": safe_text},
         )
 
     # ------------------------------------------------------------------
@@ -412,6 +414,10 @@ class MagpieTTSDeployment:
                     continue
 
                 frame_bytes = message["bytes"]
+                logger.info(
+                    "[ws-stream] Received frame (%d bytes), calling VLM...",
+                    len(frame_bytes),
+                )
                 b64 = base64.b64encode(frame_bytes).decode("ascii")
                 data_uri = f"data:image/jpeg;base64,{b64}"
 

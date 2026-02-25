@@ -16,8 +16,8 @@ spec:
           engine_kwargs:
             dtype: bfloat16
             max_model_len: 32768  # Native 256K, balanced for memory
-            gpu_memory_utilization: 0.80  # Conservative for vision overhead
-            tensor_parallel_size: 2  # Optimal for 8B model across 2 GPUs
+            gpu_memory_utilization: 0.80
+            tensor_parallel_size: 2  # Split across 2 GPUs for lower latency
             disable_log_stats: false
             trust_remote_code: true  # Required for Qwen3-VL
             limit_mm_per_prompt:  # Dictionary format for multi-modal limits
@@ -25,10 +25,10 @@ spec:
               video: 1
           deployment_config:
             autoscaling_config:
-              min_replicas: 1
-              max_replicas: 2  # Can scale to 4 GPUs total
-              target_ongoing_requests: 32
-            max_ongoing_requests: 64
+              min_replicas: 2
+              max_replicas: 2  # 2 replicas x 2 GPUs each = 4 GPUs
+              target_ongoing_requests: 8
+            max_ongoing_requests: 16
 #        - model_loading_config:
 #            model_id: nemotron-vl-12b
 #            model_source: nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16
@@ -81,7 +81,7 @@ spec:
                   memory: 4Gi
     workerGroupSpecs:
       - replicas: 2
-        minReplicas: 1
+        minReplicas: 2
         maxReplicas: 2
         numOfHosts: 1
         groupName: gpu-group
@@ -103,6 +103,6 @@ spec:
                     memory: 64Gi
                     nvidia.com/gpu: "2"
                   requests:
-                    cpu: 16
+                    cpu: 4
                     memory: 32Gi
                     nvidia.com/gpu: "2"

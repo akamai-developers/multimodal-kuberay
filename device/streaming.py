@@ -303,6 +303,20 @@ def infer_thread(
             if frame is _STOP:
                 break
 
+            # Drain stale frames — always send the freshest one
+            drained = 0
+            while True:
+                try:
+                    newer = frame_queue.get_nowait()
+                    if newer is _STOP:
+                        break
+                    frame = newer
+                    drained += 1
+                except queue.Empty:
+                    break
+            if drained:
+                log("infer", f"Skipped {drained} stale frame(s), using latest")
+
             if cfg.offline:
                 # Offline mode: skip server call, generate test tone
                 log("infer", "[offline] Generating test tone")
@@ -344,7 +358,7 @@ def infer_thread(
                 latency_info["frame_sent"] = t0
                 latency_info["first_audio"] = 0.0
             try:
-                resp = client.post(url, json=payload)
+                resp = client.post(url, json=payload, headers=headers)
                 elapsed = time.monotonic() - t0
 
                 if resp.status_code != 200:
@@ -525,6 +539,23 @@ def ws_infer_thread(
 
                 if frame is _STOP:
                     return
+
+                # Drain any stale frames so we always send the freshest one.
+                # The VLM+TTS pipeline is slower than the capture interval,
+                # so by the time we finish processing one frame, newer ones
+                # will have piled up in the queue.
+                drained = 0
+                while True:
+                    try:
+                        newer = frame_queue.get_nowait()
+                        if newer is _STOP:
+                            return
+                        frame = newer
+                        drained += 1
+                    except queue.Empty:
+                        break
+                if drained:
+                    log("ws", f"Skipped {drained} stale frame(s), using latest")
 
                 if cfg.offline:
                     log("ws", "[offline] Generating test tone")
