@@ -11,7 +11,7 @@ spec:
       deployments:
       - name: MagpieTTSDeployment
         autoscaling_config:
-          min_replicas: 2
+          min_replicas: 1
           max_replicas: 2
           target_ongoing_requests: 4
         max_ongoing_requests: 8
@@ -68,8 +68,8 @@ spec:
               configMap:
                 name: tts-serve-code
     workerGroupSpecs:
-      - replicas: 2
-        minReplicas: 2
+      - replicas: 1
+        minReplicas: 1
         maxReplicas: 2
         numOfHosts: 1
         groupName: tts-gpu-group

@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ray-workers-monitor
+  namespace: default
+  labels:
+    release: kube-prometheus-stack  # picked up by the Prometheus Operator
+spec:
+  jobLabel: ray-workers
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - default
+  selector:
+    matchLabels:
+      ray.io/is-ray-node: "yes"

@@ -1,10 +1,16 @@
 grafana:
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
   grafana.ini:
     security:
       allow_embedding: true
     auth.anonymous:
       enabled: true
-      org_role: Viewer
+      org_role: Editor
   dashboardProviders:
     dashboardproviders.yaml:
       apiVersion: 1

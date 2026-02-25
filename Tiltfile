@@ -135,7 +135,13 @@ helm_resource(
         "--timeout=600s",
     ],
     labels=["monitoring"],
-    port_forwards=[port_forward(3000, 3000, name='grafana')]
+)
+local_resource(
+    "grafana",
+    serve_cmd="kubectl port-forward -n kube-system svc/kube-prometheus-stack-grafana 3000:80",
+    resource_deps=["kube-prometheus-stack"],
+    labels=["monitoring"],
+    links=[link("http://localhost:3000", "Grafana")],
 )
 
 # ░█░█░█░█░█▀▀░█░█░█▀▀
@@ -262,7 +268,6 @@ k8s_resource(
     port_forwards=["8266:8265", "8001:8000"],
 )
 
-# RayService
 k8s_yaml("manifests/rayservice.yaml")
 k8s_resource(
     new_name="ray-service",
@@ -272,4 +277,49 @@ k8s_resource(
     resource_deps=["kuberay-operator", "hf-secret"],
     labels=["kuberay"],
     port_forwards=["8265:8265", "8000:8000"],
+)
+
+# ░█▀▄░█▀█░█░█░░░█▄█░█▀▀░▀█▀░█▀▄░▀█▀░█▀▀░█▀▀
+# ░█▀▄░█▀█░░█░░░░█░█░█▀▀░░█░░█▀▄░░█░░█░░░▀▀█
+# ░▀░▀░▀░▀░░▀░░░░▀░▀░▀▀▀░░▀░░▀░▀░▀▀▀░▀▀▀░▀▀▀
+
+# Ray Metrics PodMonitor — scrapes all Ray pods for Prometheus
+k8s_yaml("manifests/ray-podmonitor.yaml")
+k8s_resource(
+    new_name="ray-metrics",
+    objects=["ray-workers-monitor:podmonitor"],
+    resource_deps=["kube-prometheus-stack"],
+    labels=["monitoring"],
+)
+
+# Ray Grafana Dashboards — auto-provisioned via Grafana sidecar
+ray_dashboard_cms = []
+for dashboard_path in listdir("hack/grafana-dashboards"):
+    if not dashboard_path.endswith(".json"):
+        continue
+    # listdir returns full paths; extract just the filename
+    dashboard_file = dashboard_path.split("/")[-1]
+    cm_name = "ray-grafana-" + dashboard_file.replace("_grafana_dashboard.json", "").replace("_", "-")
+    dashboard_json = str(read_file(dashboard_path))
+    k8s_yaml(encode_yaml({
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": cm_name,
+            "namespace": "kube-system",
+            "labels": {
+                "grafana_dashboard": "1",
+            },
+        },
+        "data": {
+            dashboard_file: dashboard_json,
+        },
+    }))
+    ray_dashboard_cms.append(cm_name + ":configmap")
+
+k8s_resource(
+    new_name="ray-grafana-dashboards",
+    objects=ray_dashboard_cms,
+    resource_deps=["kube-prometheus-stack"],
+    labels=["monitoring"],
 )
