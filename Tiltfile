@@ -28,6 +28,11 @@ update_settings(k8s_upsert_timeout_secs=900)
 # Load environment variables from .env file
 huggingface_token = os.getenv("HUGGINGFACE_TOKEN", "")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
+s3_endpoint_hostname = os.getenv("S3_ENDPOINT_HOSTNAME", "")
+obj_access_key = os.getenv("OBJ_ACCESS_KEY", "")
+obj_secret_key = os.getenv("OBJ_SECRET_KEY", "")
+obj_region = os.getenv("OBJ_REGION", "")
+model_bucket = os.getenv("MODEL_BUCKET", "model-cache")
 
 # Optional: Allow version overrides from env
 nvidia_gpu_operator_version = os.getenv("NVIDIA_GPU_OPERATOR_VERSION", "v25.10.0")
@@ -40,6 +45,14 @@ if not huggingface_token:
     fail("HUGGINGFACE_TOKEN environment variable is required.")
 if not openai_api_key:
     fail("OPENAI_API_KEY environment variable is required.")
+if not s3_endpoint_hostname:
+    fail("S3_ENDPOINT_HOSTNAME environment variable is required.")
+if not obj_access_key:
+    fail("OBJ_ACCESS_KEY environment variable is required.")
+if not obj_secret_key:
+    fail("OBJ_SECRET_KEY environment variable is required.")
+if not obj_region:
+    fail("OBJ_REGION environment variable is required.")
 
 # Detect and allow the LKE context
 if k8s_context().startswith("lke"):
@@ -195,6 +208,25 @@ k8s_resource(
     labels=["gateway"],
 )
 
+# Object Storage Secret for model caching
+k8s_yaml(secret_from_dict(
+    name="obj-store-secret",
+    namespace="default",
+    inputs={
+        "access_key": obj_access_key,
+        "secret_key": obj_secret_key,
+        "endpoint_hostname": s3_endpoint_hostname,
+        "region": obj_region,
+        "bucket": model_bucket,
+    }
+))
+
+k8s_resource(
+    new_name="obj-store-secret",
+    objects=["obj-store-secret:Secret:default"],
+    labels=["kuberay"],
+)
+
 # ░█░█░█▀█░█▀▀░░░█▄█░█▀█░█▀█░▀█▀░█▀▀░█▀▀░█▀▀░▀█▀░█▀▀
 # ░█▀▄░█▀█░▀▀█░░░█░█░█▀█░█░█░░█░░█▀▀░█▀▀░▀▀█░░█░░▀▀█
 # ░▀░▀░▀▀▀░▀▀▀░░░▀░▀░▀░▀░▀░▀░▀▀▀░▀░░░▀▀▀░▀▀▀░░▀░░▀▀▀
@@ -256,6 +288,18 @@ k8s_resource(
     labels=["tts"],
 )
 
+# ░█▄█░█▀█░█▀▄░█▀▀░█░░░░░█▀▀░█▀█░█▀▀░█░█░█▀▀
+# ░█░█░█░█░█░█░█▀▀░█░░░░░█░░░█▀█░█░░░█▀█░█▀▀
+# ░▀░▀░▀▀▀░▀▀░░▀▀▀░▀▀▀░░░▀▀▀░▀░▀░▀▀▀░▀░▀░▀▀▀
+
+# Model Upload Job — seeds Linode Object Storage with model weights
+k8s_yaml("manifests/model-upload-job.yaml")
+k8s_resource(
+    "model-upload",
+    resource_deps=["hf-secret", "obj-store-secret"],
+    labels=["kuberay"],
+)
+
 # TTS RayService
 k8s_yaml("manifests/rayservice-tts.yaml")
 k8s_resource(
@@ -263,7 +307,7 @@ k8s_resource(
     objects=[
         "ray-serve-tts:rayservice",
     ],
-    resource_deps=["kuberay-operator", "hf-secret", "tts-serve-code"],
+    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "tts-serve-code", "model-upload"],
     labels=["tts"],
     port_forwards=["8266:8265", "8001:8000"],
 )
@@ -274,7 +318,7 @@ k8s_resource(
     objects=[
         "ray-serve-llm:rayservice",
     ],
-    resource_deps=["kuberay-operator", "hf-secret"],
+    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload"],
     labels=["kuberay"],
     port_forwards=["8265:8265", "8000:8000"],
 )
@@ -292,7 +336,7 @@ k8s_resource(
     labels=["monitoring"],
 )
 
-# Ray Grafana Dashboards — auto-provisioned via Grafana sidecar
+# Ray Grafana Dashboards — auto-provisioned via Grafana sidecar (7 dashboards)
 ray_dashboard_cms = []
 for dashboard_path in listdir("hack/grafana-dashboards"):
     if not dashboard_path.endswith(".json"):

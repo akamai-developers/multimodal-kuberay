@@ -6,6 +6,10 @@
 
 .PHONY: help init plan apply destroy kubeconfig up ci down status test test-vision test-tts test-pipeline clean all
 
+# Load .env file if it exists, and export all variables to subprocesses (Tilt)
+-include .env
+export
+
 # Default target - show help
 help:
 	@echo "KubeRay GPU LLM Quickstart - Available Commands"

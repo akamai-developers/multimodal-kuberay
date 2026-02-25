@@ -148,9 +148,32 @@ class MagpieTTSDeployment:
             logger.info("Using NeMo v2.6.2 MagpieTTS_Model")
 
         logger.info("Loading MagpieTTS Multilingual 357M...")
-        self.model = model_cls.from_pretrained(
-            "nvidia/magpie_tts_multilingual_357m"
+        model_source = os.environ.get(
+            "TTS_MODEL_SOURCE", "nvidia/magpie_tts_multilingual_357m"
         )
+        # If model_source is a directory, look for a .nemo checkpoint inside
+        local_nemo_path = None
+        if os.path.isdir(model_source):
+            nemo_files = [f for f in os.listdir(model_source) if f.endswith(".nemo")]
+            if nemo_files:
+                local_nemo_path = os.path.join(model_source, nemo_files[0])
+                logger.info("Found cached .nemo file: %s", local_nemo_path)
+            else:
+                logger.warning(
+                    "No .nemo files in %s, falling back to NGC/HuggingFace",
+                    model_source,
+                )
+        elif os.path.isfile(model_source) and model_source.endswith(".nemo"):
+            local_nemo_path = model_source
+            logger.info("Using local .nemo file: %s", local_nemo_path)
+
+        if local_nemo_path:
+            # Local .nemo files must use restore_from(), not from_pretrained()
+            logger.info("Loading model from local checkpoint: %s", local_nemo_path)
+            self.model = model_cls.restore_from(local_nemo_path)
+        else:
+            logger.info("Loading model from NGC/HuggingFace: %s", model_source)
+            self.model = model_cls.from_pretrained(model_source)
         self.model.eval()
         self.sample_rate = getattr(
             self.model, "output_sample_rate", 22050

@@ -5,3 +5,5 @@ resources:
   - rayservice.yaml
   - rayservice-tts.yaml
   - gateway.yaml
+  - model-upload-job.yaml
+  - ray-podmonitor.yaml

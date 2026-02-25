@@ -1,0 +1,804 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "Model Cache Performance Overview",
+      "type": "row"
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Time spent in init containers downloading model weights from S3 Object Storage cache. Computed as the difference between main container start and pod creation time. Lower = faster S3 download.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "red", "value": 120 }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "title": "S3 Cache Download Time (Init Container)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "max(\n  container_start_time_seconds{pod=~\"ray-serve-llm.*worker.*\", container=\"ray-worker\"}\n) - max(\n  kube_pod_start_time{pod=~\"ray-serve-llm.*worker.*\"}\n)",
+          "legendFormat": "LLM (Qwen3-VL-8B)",
+          "refId": "A"
+        },
+        {
+          "datasource": "${datasource}",
+          "expr": "max(\n  container_start_time_seconds{pod=~\"ray-serve-tts.*worker.*\", container=\"ray-worker\"}\n) - max(\n  kube_pod_start_time{pod=~\"ray-serve-tts.*worker.*\"}\n)",
+          "legendFormat": "TTS (MagpieTTS)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Time for the Ray Serve replica to initialize — this includes loading model weights from disk into GPU memory, compiling CUDA graphs, and running initial health checks. With S3 cache, model files are already on local disk so this phase loads directly without network download.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 120 },
+              { "color": "red", "value": 600 }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 1 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "title": "Model Load Time (GPU Initialization)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"llms\"}\n/ ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"llms\"}\n/ 1000",
+          "legendFormat": "LLM (Qwen3-VL-8B)",
+          "refId": "A"
+        },
+        {
+          "datasource": "${datasource}",
+          "expr": "ray_serve_replica_initialization_latency_ms_sum{deployment=\"MagpieTTSDeployment\",application=\"tts\"}\n/ ray_serve_replica_initialization_latency_ms_count{deployment=\"MagpieTTSDeployment\",application=\"tts\"}\n/ 1000",
+          "legendFormat": "TTS (MagpieTTS)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Total time from pod creation to Ray Serve replica becoming healthy and ready to serve requests. Includes scheduling, init container (S3 download), pip install, model loading, CUDA compilation, and health checks.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 180 },
+              { "color": "red", "value": 600 }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "title": "Total Startup Time (Pod → Ready)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"llms\"}\n/ ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"llms\"}\n/ 1000",
+          "legendFormat": "LLM (Qwen3-VL-8B)",
+          "refId": "A"
+        },
+        {
+          "datasource": "${datasource}",
+          "expr": "ray_serve_replica_startup_latency_ms_sum{deployment=\"MagpieTTSDeployment\",application=\"tts\"}\n/ ray_serve_replica_startup_latency_ms_count{deployment=\"MagpieTTSDeployment\",application=\"tts\"}\n/ 1000",
+          "legendFormat": "TTS (MagpieTTS)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "id": 101,
+      "title": "Startup Phase Breakdown",
+      "type": "row"
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Breakdown of startup phases per service. Shows how much time is spent in S3 model cache download (init container) vs model GPU loading vs total startup. The S3 cache phase should be a small fraction of total.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "Duration",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineWidth": 1,
+            "scaleDistribution": { "type": "linear" }
+          },
+          "mappings": [],
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "S3 Download" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Model Load (GPU)" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Total Startup" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 4,
+      "options": {
+        "barRadius": 0.1,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" },
+        "orientation": "horizontal",
+        "showValue": "always",
+        "stacking": "none",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": 0
+      },
+      "title": "LLM Service — Startup Phase Breakdown",
+      "type": "barchart",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "max(\n  container_start_time_seconds{pod=~\"ray-serve-llm.*worker.*\", container=\"ray-worker\"}\n) - max(\n  kube_pod_start_time{pod=~\"ray-serve-llm.*worker.*\"}\n)",
+          "legendFormat": "S3 Download",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "datasource": "${datasource}",
+          "expr": "ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"llms\"}\n/ ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"llms\"}\n/ 1000",
+          "legendFormat": "Model Load (GPU)",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "datasource": "${datasource}",
+          "expr": "ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"llms\"}\n/ ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"llms\"}\n/ 1000",
+          "legendFormat": "Total Startup",
+          "instant": true,
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Breakdown of startup phases for TTS (MagpieTTS) service.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "Duration",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineWidth": 1,
+            "scaleDistribution": { "type": "linear" }
+          },
+          "mappings": [],
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "S3 Download" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Model Load (GPU)" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Total Startup" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 5,
+      "options": {
+        "barRadius": 0.1,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" },
+        "orientation": "horizontal",
+        "showValue": "always",
+        "stacking": "none",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": 0
+      },
+      "title": "TTS Service — Startup Phase Breakdown",
+      "type": "barchart",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "max(\n  container_start_time_seconds{pod=~\"ray-serve-tts.*worker.*\", container=\"ray-worker\"}\n) - max(\n  kube_pod_start_time{pod=~\"ray-serve-tts.*worker.*\"}\n)",
+          "legendFormat": "S3 Download",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "datasource": "${datasource}",
+          "expr": "ray_serve_replica_initialization_latency_ms_sum{deployment=\"MagpieTTSDeployment\",application=\"tts\"}\n/ ray_serve_replica_initialization_latency_ms_count{deployment=\"MagpieTTSDeployment\",application=\"tts\"}\n/ 1000",
+          "legendFormat": "Model Load (GPU)",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "datasource": "${datasource}",
+          "expr": "ray_serve_replica_startup_latency_ms_sum{deployment=\"MagpieTTSDeployment\",application=\"tts\"}\n/ ray_serve_replica_startup_latency_ms_count{deployment=\"MagpieTTSDeployment\",application=\"tts\"}\n/ 1000",
+          "legendFormat": "Total Startup",
+          "instant": true,
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "id": 102,
+      "title": "Cache Efficiency",
+      "type": "row"
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Percentage of total startup time spent downloading from S3 cache. Lower % means the cache download is a small fraction = cache is fast relative to model initialization.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "max": 100,
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "red", "value": 60 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 17 },
+      "id": 6,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "title": "S3 Download % of Total Startup — LLM",
+      "type": "gauge",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "(\n  max(container_start_time_seconds{pod=~\"ray-serve-llm.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-llm.*worker.*\"})\n)\n/ (\n  ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"llms\"}\n  / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"llms\"}\n  / 1000\n) * 100",
+          "legendFormat": "LLM Cache %",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Percentage of total startup time spent downloading from S3 cache for TTS service.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "max": 100,
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "red", "value": 60 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 17 },
+      "id": 7,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "title": "S3 Download % of Total Startup — TTS",
+      "type": "gauge",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "(\n  max(container_start_time_seconds{pod=~\"ray-serve-tts.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-tts.*worker.*\"})\n)\n/ (\n  ray_serve_replica_startup_latency_ms_sum{deployment=\"MagpieTTSDeployment\",application=\"tts\"}\n  / ray_serve_replica_startup_latency_ms_count{deployment=\"MagpieTTSDeployment\",application=\"tts\"}\n  / 1000\n) * 100",
+          "legendFormat": "TTS Cache %",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Speed at which model weights were transferred from S3 Object Storage. Assumes known model sizes: Qwen3-VL-8B ~16GB, MagpieTTS ~1.4GB.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "green", "value": 500 }
+            ]
+          },
+          "unit": "MBs"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 17 },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "title": "Estimated S3 Transfer Speed",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "16000 / (\n  max(container_start_time_seconds{pod=~\"ray-serve-llm.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-llm.*worker.*\"})\n)",
+          "legendFormat": "LLM (~16 GB)",
+          "refId": "A"
+        },
+        {
+          "datasource": "${datasource}",
+          "expr": "1400 / (\n  max(container_start_time_seconds{pod=~\"ray-serve-tts.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-tts.*worker.*\"})\n)",
+          "legendFormat": "TTS (~1.4 GB)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "id": 103,
+      "title": "Ray Serve Replica Health",
+      "type": "row"
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Ray Serve replica initialization latency over time. Shows how long each replica took to initialize (constructor + health check). Spikes indicate new replicas being created (e.g., scaling events, restarts).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 8,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "always",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "id": 9,
+      "options": {
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Replica Initialization Latency Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "increase(ray_serve_replica_initialization_latency_ms_sum{deployment!=\"OpenAiIngress\"}[5m])\n/ increase(ray_serve_replica_initialization_latency_ms_count{deployment!=\"OpenAiIngress\"}[5m])\n/ 1000",
+          "legendFormat": "{{deployment}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Health check latency for each Ray Serve deployment. Higher values may indicate model or GPU issues.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "id": 10,
+      "options": {
+        "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Health Check Latency",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "rate(ray_serve_health_check_latency_ms_sum{application=~\"llms|tts\"}[5m])\n/ rate(ray_serve_health_check_latency_ms_count{application=~\"llms|tts\"}[5m])",
+          "legendFormat": "{{deployment}} ({{application}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "id": 104,
+      "title": "Worker Pod Startup Details",
+      "type": "row"
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Detailed startup timing for each Ray Serve worker pod. Pod Start = creation timestamp, Main Container Start = when the app container started (after init containers completed), Init Duration = S3 cache download time.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 80 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Init Duration (s)" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 30 }, { "color": "red", "value": 120 }] } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Pod" },
+            "properties": [
+              { "id": "custom.width", "value": 400 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 33 },
+      "id": 11,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "Init Duration (s)" }]
+      },
+      "title": "Worker Pod Init Container Timings",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "container_start_time_seconds{pod=~\"ray-serve.*worker.*\", container=~\"ray-worker\"}\n- on(pod, namespace) group_left()\nkube_pod_start_time{pod=~\"ray-serve.*worker.*\"}",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "container": true,
+              "endpoint": true,
+              "id": true,
+              "image": true,
+              "instance": true,
+              "job": true,
+              "metrics_path": true,
+              "name": true,
+              "namespace": true,
+              "node": true,
+              "service": true,
+              "uid": true
+            },
+            "indexByName": {},
+            "renameByName": {
+              "Value": "Init Duration (s)",
+              "pod": "Pod"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "id": 105,
+      "title": "Container Resource Usage During Startup",
+      "type": "row"
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Network receive bandwidth for worker pods. Shows the S3 download burst during init container execution, then the lower steady-state for inference traffic.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 30,
+            "gradientMode": "scheme",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "id": 12,
+      "options": {
+        "legend": { "calcs": ["max", "mean"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Network Receive (Model Download Bandwidth)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "sum by (pod) (\n  rate(container_network_receive_bytes_total{pod=~\"ray-serve.*worker.*\"}[1m])\n)",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": "${datasource}",
+      "description": "Memory usage during worker pod startup. Shows the ramp-up as model weights are loaded from disk into GPU memory through CPU staging.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "id": 13,
+      "options": {
+        "legend": { "calcs": ["max", "lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Worker Memory Usage (Model Loading Ramp)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": "${datasource}",
+          "expr": "container_memory_working_set_bytes{pod=~\"ray-serve.*worker.*\", container=~\"ray-worker\"}",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["ray", "model-cache", "llm", "tts", "s3"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Data Source",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Model Cache Performance",
+  "uid": "model-cache-perf",
+  "version": 1
+}

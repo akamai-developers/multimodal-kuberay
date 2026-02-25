@@ -1,0 +1,120 @@
+# Model Cache Upload Job
+# Downloads models from HuggingFace and uploads them to Linode Object Storage.
+# Idempotent — skips models that are already cached in the bucket.
+#
+# NOTE: Kubernetes Jobs are immutable. If you need to re-run this Job
+# (e.g. after adding a new model), delete the old Job first:
+#   kubectl delete job model-upload
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-upload
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: upload
+          image: python:3.11-slim
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              echo "=== Installing tools ==="
+              pip install -q "huggingface_hub"
+              apt-get update -qq && apt-get install -y -qq wget > /dev/null 2>&1
+
+              echo "Installing s5cmd v2.3.0..."
+              wget -q -O /tmp/s5cmd.tar.gz \
+                "https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_Linux-64bit.tar.gz"
+              tar xzf /tmp/s5cmd.tar.gz -C /usr/local/bin && rm /tmp/s5cmd.tar.gz
+              s5cmd version
+
+              export AWS_ACCESS_KEY_ID="${OBJ_ACCESS_KEY}"
+              export AWS_SECRET_ACCESS_KEY="${OBJ_SECRET_KEY}"
+              export AWS_REGION="${OBJ_REGION}"
+              S3_ENDPOINT="https://${S3_ENDPOINT_HOSTNAME}"
+
+              echo "Ensuring bucket s3://${MODEL_BUCKET} exists..."
+              if ! s5cmd --endpoint-url "$S3_ENDPOINT" ls "s3://${MODEL_BUCKET}" > /dev/null 2>&1; then
+                echo "Creating bucket..."
+                s5cmd --endpoint-url "$S3_ENDPOINT" mb "s3://${MODEL_BUCKET}" || {
+                  echo "s5cmd mb failed, trying curl PUT..."
+                  curl -s -X PUT "https://${MODEL_BUCKET}.${S3_ENDPOINT_HOSTNAME}/" \
+                    -H "Host: ${MODEL_BUCKET}.${S3_ENDPOINT_HOSTNAME}" \
+                    --aws-sigv4 "aws:amz:${OBJ_REGION}:s3" \
+                    --user "${OBJ_ACCESS_KEY}:${OBJ_SECRET_KEY}"
+                }
+                echo "Bucket created."
+              else
+                echo "Bucket exists."
+              fi
+
+              upload_model() {
+                local hf_repo="$1"
+                local s3_prefix="$2"
+                file_count=$(s5cmd --endpoint-url "$S3_ENDPOINT" \
+                  ls "s3://${MODEL_BUCKET}/${s3_prefix}/*" 2>/dev/null | wc -l || echo "0")
+                if [ "$file_count" -gt 5 ]; then
+                  echo "SKIP ${hf_repo} already cached (${file_count} files)"
+                  return 0
+                fi
+                echo "DOWNLOADING ${hf_repo} from HuggingFace..."
+                python3 -c "import os,sys;from huggingface_hub import snapshot_download;snapshot_download(sys.argv[1],local_dir=sys.argv[2],token=os.environ.get('HUGGING_FACE_HUB_TOKEN'));print('Downloaded '+sys.argv[1])" "${hf_repo}" "/staging/${s3_prefix}"
+                echo "UPLOADING to s3://${MODEL_BUCKET}/${s3_prefix}/..."
+                s5cmd --endpoint-url "$S3_ENDPOINT" sync "/staging/${s3_prefix}/*" "s3://${MODEL_BUCKET}/${s3_prefix}/"
+                rm -rf "/staging/${s3_prefix}"
+                echo "DONE ${hf_repo}"
+              }
+
+              echo "=== Caching models ==="
+              upload_model "Qwen/Qwen3-VL-8B-Instruct" "Qwen/Qwen3-VL-8B-Instruct"
+              upload_model "nvidia/magpie_tts_multilingual_357m" "nvidia/magpie_tts_multilingual_357m" \
+                || echo "WARNING: TTS model upload failed"
+              echo "=== Done ==="
+          env:
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-secret
+                  key: hf_token
+            - name: OBJ_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: obj-store-secret
+                  key: access_key
+            - name: OBJ_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: obj-store-secret
+                  key: secret_key
+            - name: S3_ENDPOINT_HOSTNAME
+              valueFrom:
+                secretKeyRef:
+                  name: obj-store-secret
+                  key: endpoint_hostname
+            - name: OBJ_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: obj-store-secret
+                  key: region
+            - name: MODEL_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: obj-store-secret
+                  key: bucket
+          resources:
+            requests:
+              cpu: 2
+              memory: 4Gi
+            limits:
+              memory: 8Gi
+          volumeMounts:
+            - name: staging
+              mountPath: /staging
+      volumes:
+        - name: staging
+          emptyDir:
+            sizeLimit: 25Gi

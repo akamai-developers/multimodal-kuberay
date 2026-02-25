@@ -77,6 +77,51 @@ spec:
           num-gpus: "1"
         template:
           spec:
+            initContainers:
+              - name: model-download
+                image: alpine:3.20
+                command: ["/bin/sh", "-c"]
+                args:
+                  - |
+                    set -e
+                    echo "Installing s5cmd..."
+                    wget -q -O /tmp/s5cmd.tar.gz \
+                      "https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_Linux-64bit.tar.gz"
+                    tar xzf /tmp/s5cmd.tar.gz -C /usr/local/bin && rm /tmp/s5cmd.tar.gz
+                    echo "Downloading MagpieTTS from s3://${MODEL_BUCKET}/..."
+                    s5cmd --endpoint-url "https://${S3_ENDPOINT_HOSTNAME}" \
+                      sync "s3://${MODEL_BUCKET}/nvidia/magpie_tts_multilingual_357m/*" /model-cache/ \
+                      || echo "WARNING: TTS model not in S3 cache, will download from NGC at startup"
+                    echo "Init complete."
+                env:
+                  - name: S3_ENDPOINT_HOSTNAME
+                    valueFrom:
+                      secretKeyRef:
+                        name: obj-store-secret
+                        key: endpoint_hostname
+                  - name: AWS_ACCESS_KEY_ID
+                    valueFrom:
+                      secretKeyRef:
+                        name: obj-store-secret
+                        key: access_key
+                  - name: AWS_SECRET_ACCESS_KEY
+                    valueFrom:
+                      secretKeyRef:
+                        name: obj-store-secret
+                        key: secret_key
+                  - name: AWS_REGION
+                    valueFrom:
+                      secretKeyRef:
+                        name: obj-store-secret
+                        key: region
+                  - name: MODEL_BUCKET
+                    valueFrom:
+                      secretKeyRef:
+                        name: obj-store-secret
+                        key: bucket
+                volumeMounts:
+                  - name: model-cache
+                    mountPath: /model-cache
             containers:
               - name: ray-worker
                 image: rayproject/ray:2.54.0-py311-cu128
@@ -93,6 +138,8 @@ spec:
                       secretKeyRef:
                         name: hf-secret
                         key: hf_token
+                  - name: TTS_MODEL_SOURCE
+                    value: "/model-cache"
                 resources:
                   limits:
                     memory: 16Gi
@@ -104,7 +151,11 @@ spec:
                 volumeMounts:
                   - name: serve-code
                     mountPath: /home/ray/serve
+                  - name: model-cache
+                    mountPath: /model-cache
             volumes:
               - name: serve-code
                 configMap:
                   name: tts-serve-code
+              - name: model-cache
+                emptyDir: {}
