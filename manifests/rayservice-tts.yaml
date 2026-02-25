@@ -59,14 +59,20 @@ spec:
               resources:
                 requests:
                   cpu: 2
-                  memory: 4Gi
+                  memory: 8Gi
               volumeMounts:
                 - name: serve-code
                   mountPath: /home/ray/serve
+                - name: dshm
+                  mountPath: /dev/shm
           volumes:
             - name: serve-code
               configMap:
                 name: tts-serve-code
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 4Gi
     workerGroupSpecs:
       - replicas: 1
         minReplicas: 1
@@ -153,9 +159,15 @@ spec:
                     mountPath: /home/ray/serve
                   - name: model-cache
                     mountPath: /model-cache
+                  - name: dshm
+                    mountPath: /dev/shm
             volumes:
               - name: serve-code
                 configMap:
                   name: tts-serve-code
               - name: model-cache
                 emptyDir: {}
+              - name: dshm
+                emptyDir:
+                  medium: Memory
+                  sizeLimit: 8Gi
