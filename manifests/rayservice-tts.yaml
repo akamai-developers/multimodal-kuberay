@@ -13,7 +13,13 @@ spec:
         autoscaling_config:
           min_replicas: 1
           max_replicas: 2
-          target_ongoing_requests: 4
+          target_ongoing_requests: 2  # Scale up when avg ongoing > 2 per replica
+          metrics_interval_s: 5
+          look_back_period_s: 30
+          upscale_delay_s: 15
+          downscale_delay_s: 180  # 3 min cooldown — TTS model loads faster than LLM
+          upscaling_factor: 1.0
+          downscaling_factor: 0.5
         max_ongoing_requests: 8
         ray_actor_options:
           num_gpus: 1
@@ -28,6 +34,17 @@ spec:
           PYTHONPATH: "/home/ray/serve:$PYTHONPATH"
   rayClusterConfig:
     rayVersion: "2.54.0"
+    enableInTreeAutoscaling: true
+    autoscalerOptions:
+      upscalingMode: Default
+      idleTimeoutSeconds: 180  # 3 min idle before removing a TTS worker
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
     headGroupSpec:
       rayStartParams:
         num-cpus: "0"
@@ -40,6 +57,12 @@ spec:
               env:
                 - name: PYTHONPATH
                   value: "/home/ray/serve"
+                - name: RAY_GRAFANA_HOST
+                  value: "http://kube-prometheus-stack-grafana.kube-system.svc.cluster.local"
+                - name: RAY_GRAFANA_IFRAME_HOST
+                  value: "http://localhost:3000"
+                - name: RAY_PROMETHEUS_HOST
+                  value: "http://kube-prometheus-stack-prometheus.kube-system.svc.cluster.local:9090"
               ports:
                 - containerPort: 8000
                   name: serve

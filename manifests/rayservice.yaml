@@ -27,7 +27,13 @@ spec:
             autoscaling_config:
               min_replicas: 1
               max_replicas: 2  # 2 replicas x 2 GPUs each = 4 GPUs
-              target_ongoing_requests: 8
+              target_ongoing_requests: 4  # Scale up when avg ongoing > 4 per replica
+              metrics_interval_s: 5  # Collect metrics every 5s for responsive scaling
+              look_back_period_s: 30  # Smooth over 30s window to avoid flapping
+              upscale_delay_s: 15  # React quickly to load spikes
+              downscale_delay_s: 300  # 5 min cooldown — model loading is expensive
+              upscaling_factor: 1.0  # At least double replicas when scaling up
+              downscaling_factor: 0.5  # Halve at most when scaling down
             max_ongoing_requests: 16
 #        - model_loading_config:
 #            model_id: nemotron-vl-12b
@@ -50,6 +56,17 @@ spec:
 #            max_ongoing_requests: 64
   rayClusterConfig:
     rayVersion: "2.54.0"
+    enableInTreeAutoscaling: true
+    autoscalerOptions:
+      upscalingMode: Default  # Conservative, Aggressive, or Default
+      idleTimeoutSeconds: 300  # 5 min idle before removing a worker (model load is ~3 min)
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
     headGroupSpec:
       rayStartParams:
         num-cpus: "0"

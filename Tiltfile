@@ -309,7 +309,15 @@ k8s_resource(
     ],
     resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "tts-serve-code", "model-upload"],
     labels=["tts"],
-    port_forwards=["8266:8265", "8001:8000"],
+)
+
+# Port-forwards via stable service names — survives blue-green RayCluster swaps
+local_resource(
+    "tts-dashboard",
+    serve_cmd="kubectl port-forward svc/ray-serve-tts-head-svc 8266:8265 8001:8000",
+    resource_deps=["tts-service"],
+    labels=["tts"],
+    links=[link("http://localhost:8266", "TTS Ray Dashboard")],
 )
 
 k8s_yaml("manifests/rayservice.yaml")
@@ -320,7 +328,14 @@ k8s_resource(
     ],
     resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload"],
     labels=["kuberay"],
-    port_forwards=["8265:8265", "8000:8000"],
+)
+
+local_resource(
+    "llm-dashboard",
+    serve_cmd="kubectl port-forward svc/ray-serve-llm-head-svc 8265:8265 8000:8000",
+    resource_deps=["ray-service"],
+    labels=["kuberay"],
+    links=[link("http://localhost:8265", "LLM Ray Dashboard")],
 )
 
 # ░█▀▄░█▀█░█░█░░░█▄█░█▀▀░▀█▀░█▀▄░▀█▀░█▀▀░█▀▀
