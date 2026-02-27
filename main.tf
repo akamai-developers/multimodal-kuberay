@@ -19,7 +19,7 @@ provider "linode" {
 # ============================================================================
 
 resource "linode_lke_cluster" "gpu_cluster" {
-  label       = var.cluster_label
+  label       = "${var.cluster_label}-${var.region}"
   k8s_version = var.kubernetes_version
   region      = var.region
   tags        = var.tags
@@ -29,6 +29,15 @@ resource "linode_lke_cluster" "gpu_cluster" {
   }
 
   # GPU Node Pool
+  pool {
+    type  = var.gpu_big_node_type
+    count = var.gpu_big_node_count
+
+    autoscaler {
+      min = var.gpu_big_node_count
+      max = var.gpu_big_node_count
+    }
+  }
   pool {
     type  = var.gpu_node_type
     count = var.gpu_node_count

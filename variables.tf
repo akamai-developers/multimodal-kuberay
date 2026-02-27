@@ -19,7 +19,19 @@ variable "kubernetes_version" {
 variable "region" {
   description = "Linode region for the cluster (us-sea, us-east, etc.)"
   type        = string
-  default     = "ca-central"
+  default     = "us-lax"
+}
+
+variable "gpu_big_node_type" {
+  description = "Linode type for GPU nodes (Blackwell or Ada)"
+  type        = string
+  default     = "g3-gpu-rtxpro6000-blackwell-4"
+}
+
+variable "gpu_big_node_count" {
+  description = "Number of GPU nodes in the cluster"
+  type        = number
+  default     = 1
 }
 
 variable "gpu_node_type" {
@@ -31,7 +43,7 @@ variable "gpu_node_type" {
 variable "gpu_node_count" {
   description = "Number of GPU nodes in the cluster"
   type        = number
-  default     = 3
+  default     = 2
 }
 
 variable "tags" {
