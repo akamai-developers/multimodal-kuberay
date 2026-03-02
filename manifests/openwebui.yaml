@@ -1,0 +1,187 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenWebUI — persistent storage for user accounts, settings and chat history
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openwebui-data
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenWebUI Deployment
+# Configured to talk directly to the MiniMax Ray Serve service (intra-cluster,
+# no gateway hop) and to the Pipelines server for the research pipeline.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openwebui
+  namespace: default
+  labels:
+    app: openwebui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openwebui
+  template:
+    metadata:
+      labels:
+        app: openwebui
+    spec:
+      containers:
+        - name: openwebui
+          image: ghcr.io/open-webui/open-webui:main
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            # ── Backends: MiniMax M2.5 + Pipelines server ─────────────────
+            # OpenWebUI v0.8.x discovers models (including pipelines) from
+            # all entries in OPENAI_API_BASE_URLS (semicolon-separated).
+            - name: OPENAI_API_BASE_URLS
+              value: "http://minimax-llm-svc.default.svc.cluster.local:8000/v1;http://openwebui-pipelines-svc.default.svc.cluster.local:9099"
+            - name: OPENAI_API_KEYS
+              value: "test_token;test_token"
+            - name: DEFAULT_MODELS
+              value: "minimax-m2.5"
+            # ── General settings ──────────────────────────────────────────
+            - name: WEBUI_AUTH
+              value: "True"
+            - name: ENABLE_WEBSOCKET_SUPPORT
+              value: "True"
+            - name: WEBUI_NAME
+              value: "Deep Research Agent"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /app/backend/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: openwebui-data
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenWebUI Service — LoadBalancer gives it its own public IP so it can be
+# migrated to a different cluster without touching backend routing.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: openwebui-svc
+  namespace: default
+  labels:
+    app: openwebui
+spec:
+  selector:
+    app: openwebui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+  type: LoadBalancer
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenWebUI Pipelines — hosts the deep-research pipeline Python module.
+# The ConfigMap (created by Tiltfile from serve/research_pipeline.py) is
+# mounted into PIPELINES_DIR so the server auto-loads it on startup.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openwebui-pipelines
+  namespace: default
+  labels:
+    app: openwebui-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openwebui-pipelines
+  template:
+    metadata:
+      labels:
+        app: openwebui-pipelines
+    spec:
+      initContainers:
+        - name: copy-pipelines
+          image: busybox:1.37
+          command: ["sh", "-c", "cp /cm/*.py /pipelines/"]
+          volumeMounts:
+            - name: pipeline-cm
+              mountPath: /cm
+            - name: pipeline-code
+              mountPath: /pipelines
+      containers:
+        - name: pipelines
+          image: ghcr.io/open-webui/pipelines:main
+          ports:
+            - containerPort: 9099
+              name: http
+          env:
+            - name: PIPELINES_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-secret
+                  key: api_key
+            - name: PIPELINES_DIR
+              value: "/app/pipelines"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9099
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          volumeMounts:
+            - name: pipeline-code
+              mountPath: /app/pipelines
+      volumes:
+        - name: pipeline-cm
+          configMap:
+            name: research-pipeline-code
+        - name: pipeline-code
+          emptyDir: {}
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipelines Service — ClusterIP (internal only; OpenWebUI talks to it directly)
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: openwebui-pipelines-svc
+  namespace: default
+  labels:
+    app: openwebui-pipelines
+spec:
+  selector:
+    app: openwebui-pipelines
+  ports:
+    - name: http
+      port: 9099
+      targetPort: 9099
+      protocol: TCP
+  type: ClusterIP

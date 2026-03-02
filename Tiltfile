@@ -254,45 +254,43 @@ k8s_resource(
     objects=[
     "llm-gateway:gateway",
     "llm-route:httproute",
-    "tts-route:httproute",
     "llm-gateway-auth:securitypolicy",
     "llm-gateway-client-policy:clienttrafficpolicy",
-    "tts-backend-policy:backendtrafficpolicy",
     "envoy:gatewayclass"
     ],
     resource_deps=["envoy-gateway", "llm-gateway-auth"],
     labels=["gateway"],
 )
 
-# ░▀█▀░▀█▀░█▀▀░░░█▀▀░█▀▀░█▀▄░█░█░▀█▀░█▀▀░█▀▀
-# ░░█░░░█░░▀▀█░░░▀▀█░█▀▀░█▀▄░▀▄▀░░█░░█░░░█▀▀
-# ░░▀░░░▀░░▀▀▀░░░▀▀▀░▀▀▀░▀░▀░░▀░░▀▀▀░▀▀▀░▀▀▀
+# ░█▀▄░█▀▀░█▀▀░█▀▀░█▀█░█▀▄░█▀▀░█░█░░░█▀█░▀█▀░█▀█░█▀▀░█░░░▀█▀░█▀█░█▀▀
+# ░█▀▄░█▀▀░▀▀█░█▀▀░█▀█░█▀▄░█░░░█▀█░░░█▀▀░░█░░█▀▀░█▀▀░█░░░░█░░█░█░█▀▀
+# ░▀░▀░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀░▀░▀▀▀░▀░▀░░░▀░░░▀▀▀░▀░░░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀▀▀
 
-# TTS Serve Code ConfigMap — auto-updates when serve/tts_app.py changes
-tts_serve_code = str(read_file("serve/tts_app.py"))
+# Research Pipeline ConfigMap — auto-updates when serve/research_pipeline.py changes
+research_pipeline_code = str(read_file("serve/research_pipeline.py"))
 k8s_yaml(encode_yaml({
     "apiVersion": "v1",
     "kind": "ConfigMap",
     "metadata": {
-        "name": "tts-serve-code",
+        "name": "research-pipeline-code",
         "namespace": "default",
     },
     "data": {
-        "tts_app.py": tts_serve_code,
+        "research_pipeline.py": research_pipeline_code,
     },
 }))
 
 k8s_resource(
-    new_name="tts-serve-code",
-    objects=["tts-serve-code:configmap"],
-    labels=["tts"],
+    new_name="research-pipeline-code",
+    objects=["research-pipeline-code:configmap"],
+    labels=["openwebui"],
 )
 
-# ░█▄█░█▀█░█▀▄░█▀▀░█░░░░░█▀▀░█▀█░█▀▀░█░█░█▀▀
-# ░█░█░█░█░█░█░█▀▀░█░░░░░█░░░█▀█░█░░░█▀█░█▀▀
-# ░▀░▀░▀▀▀░▀▀░░▀▀▀░▀▀▀░░░▀▀▀░▀░▀░▀▀▀░▀░▀░▀▀▀
+# ░█░█░█▀█░█▀▀░░░█▄█░█▀█░█▀▄░█▀▀░█░░░░░█▀▀░█▀█░█▀▀░█░█░█▀▀
+# ░█▀▄░█▀█░▀▀█░░░█░█░█░█░█░█░█▀▀░█░░░░░█░░░█▀█░█░░░█▀█░█▀▀
+# ░▀░▀░▀▀▀░▀▀▀░░░▀░▀░▀▀▀░▀▀░░▀▀▀░▀▀▀░░░▀▀▀░▀░▀░▀▀▀░▀░▀░▀▀▀
 
-# Model Upload Job — seeds Linode Object Storage with model weights
+# Model Upload Job — caches MiniMax-M2.5 and Nemotron-Parse-v1.2 in Object Storage
 k8s_yaml("manifests/model-upload-job.yaml")
 k8s_resource(
     "model-upload",
@@ -300,42 +298,88 @@ k8s_resource(
     labels=["kuberay"],
 )
 
-# TTS RayService
-k8s_yaml("manifests/rayservice-tts.yaml")
-k8s_resource(
-    new_name="tts-service",
-    objects=[
-        "ray-serve-tts:rayservice",
-    ],
-    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "tts-serve-code", "model-upload"],
-    labels=["tts"],
-)
+# ░█▄█░▀█▀░█▀█░▀█▀░█▄█░█▀█░█░█░░░█▄█░▀▀▄░░░█▀▀░
+# ░█░█░░█░░█░█░░█░░█░█░█▀█░▀▄▀░░░█░█░▄▀░░░░▀▀█░
+# ░▀░▀░▀▀▀░▀░▀░▀▀▀░▀░▀░▀░▀░░▀░░░░▀░▀░▀▀▀░░░▀▀▀░
 
-# Port-forwards via stable service names — survives blue-green RayCluster swaps
-local_resource(
-    "tts-dashboard",
-    serve_cmd="kubectl port-forward svc/ray-serve-tts-head-svc 8266:8265 8001:8000",
-    resource_deps=["tts-service"],
-    labels=["tts"],
-    links=[link("http://localhost:8266", "TTS Ray Dashboard")],
-)
-
-k8s_yaml("manifests/rayservice.yaml")
+# MiniMax M2.5 — large MoE on the 4× Blackwell node
+k8s_yaml("manifests/rayservice-minimax.yaml")
 k8s_resource(
-    new_name="ray-service",
+    new_name="minimax-service",
     objects=[
-        "ray-serve-llm:rayservice",
+        "ray-serve-minimax:rayservice",
+        "minimax-llm-svc:service",
     ],
     resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload"],
     labels=["kuberay"],
 )
 
 local_resource(
-    "llm-dashboard",
-    serve_cmd="kubectl port-forward svc/ray-serve-llm-head-svc 8265:8265 8000:8000",
-    resource_deps=["ray-service"],
+    "minimax-dashboard",
+    serve_cmd="kubectl port-forward svc/minimax-llm-svc 8265:8265 8000:8000",
+    resource_deps=["minimax-service"],
     labels=["kuberay"],
-    links=[link("http://localhost:8265", "LLM Ray Dashboard")],
+    links=[link("http://localhost:8265", "MiniMax Ray Dashboard")],
+)
+
+# ░█▀█░█▀▀░█▄█░█▀█░▀█▀░█▀▄░█▀█░█▀█░░░█▀█░█▀█░█▀▄░█▀▀░█▀▀
+# ░█░█░█▀▀░█░█░█░█░░█░░█▀▄░█░█░█░█░░░█▀▀░█▀█░█▀▄░▀▀█░█▀▀
+# ░▀░▀░▀▀▀░▀░▀░▀▀▀░▀▀▀░▀░▀░▀▀▀░▀░▀░░░▀░░░▀░▀░▀░▀░▀▀▀░▀▀▀
+
+# Nemotron Parse v1.2 — KubeRay RayService with fractional GPUs (0.5 GPU/replica)
+# 2 workers on the 2× 2-GPU nodes, Ray Serve packs 2 replicas per GPU → up to 8 replicas
+k8s_yaml("manifests/rayservice-nemotron-parse.yaml")
+k8s_resource(
+    new_name="nemotron-parse-service",
+    objects=[
+        "ray-serve-nemotron-parse:rayservice",
+        "nemotron-parse-svc:service",
+    ],
+    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload", "gpu-operator"],
+    labels=["kuberay"],
+)
+
+local_resource(
+    "nemotron-parse-dashboard",
+    serve_cmd="until kubectl get endpoints nemotron-parse-svc -o jsonpath='{.subsets[0].addresses}' 2>/dev/null | grep -q ip; do echo 'Waiting for nemotron-parse-svc endpoints...'; sleep 5; done && kubectl port-forward svc/nemotron-parse-svc 18265:8265 18000:8000",
+    resource_deps=["nemotron-parse-service"],
+    labels=["kuberay"],
+    links=[link("http://localhost:18265", "Nemotron Parse Ray Dashboard")],
+)
+
+# ░█▀█░█▀█░█▀▀░█▀█░█░█░█▀▀░█▀▄░█░█░▀█▀
+# ░█░█░█▀▀░█▀▀░█░█░▀▄▀░█▀▀░█▀▄░█░█░░█░
+# ░▀▀▀░▀░░░▀▀▀░▀░▀░░▀░░▀▀▀░▀▀░░▀▀▀░▀▀▀
+
+# OpenWebUI secret — raw API key for intra-cluster auth (no .htpasswd wrapping)
+k8s_yaml(secret_from_dict(
+    name="openwebui-secret",
+    namespace="default",
+    inputs={
+        "api_key": openai_api_key,
+    }
+))
+
+k8s_resource(
+    new_name="openwebui-secret",
+    objects=["openwebui-secret:Secret:default"],
+    labels=["openwebui"],
+)
+
+k8s_yaml("manifests/openwebui.yaml")
+k8s_resource(
+    "openwebui",
+    objects=[
+        "openwebui-data:persistentvolumeclaim:default",
+    ],
+    resource_deps=["openwebui-secret", "minimax-service"],
+    labels=["openwebui"],
+)
+
+k8s_resource(
+    "openwebui-pipelines",
+    resource_deps=["research-pipeline-code", "openwebui-secret"],
+    labels=["openwebui"],
 )
 
 # ░█▀▄░█▀█░█░█░░░█▄█░█▀▀░▀█▀░█▀▄░▀█▀░█▀▀░█▀▀

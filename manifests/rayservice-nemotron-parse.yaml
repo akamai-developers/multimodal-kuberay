@@ -1,0 +1,281 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Stable proxy service — KubeRay creates head/serve services with random
+# suffixes.  This service uses a predictable name so the research pipeline
+# and other consumers can reach Nemotron Parse reliably.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: nemotron-parse-svc
+  namespace: default
+  labels:
+    app: nemotron-parse
+spec:
+  selector:
+    # Custom label added to the head pod template (stable across cluster restarts;
+    # ray.io/cluster gets a random suffix from KubeRay)
+    app: nemotron-parse
+    ray.io/node-type: head
+  ports:
+    - name: serve
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+    - name: dashboard
+      port: 8265
+      targetPort: 8265
+      protocol: TCP
+  type: ClusterIP
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# RayService — Nemotron Parse v1.2 OCR
+#
+# Uses ray.serve.llm:build_openai_app (same as MiniMax) with 1 GPU per
+# replica.  cloudpickle>=3.1.0 fixes the __module__ KeyError with
+# trust_remote_code classes.  With 2× 2-GPU nodes → up to 4 replicas.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: ray-serve-nemotron-parse
+spec:
+  serveConfigV2: |
+    applications:
+    - name: nemotron-parse
+      import_path: ray.serve.llm:build_openai_app
+      route_prefix: "/"
+      args:
+        llm_configs:
+        - model_loading_config:
+            model_id: nvidia/NVIDIA-Nemotron-Parse-v1.2
+            model_source: /model-cache
+          engine_kwargs:
+            dtype: bfloat16
+            max_model_len: 8192
+            max_num_seqs: 8
+            gpu_memory_utilization: 0.85
+            trust_remote_code: true
+            enforce_eager: true
+            disable_log_stats: false
+            tensor_parallel_size: 1
+          runtime_env:
+            pip:
+              - "numpy<2.0"
+              - "cloudpickle>=3.1.0"
+              - timm==1.0.22
+              - albumentations==2.0.8
+              - open_clip_torch
+          deployment_config:
+            autoscaling_config:
+              min_replicas: 2
+              max_replicas: 4
+              target_ongoing_requests: 1
+              metrics_interval_s: 2
+              look_back_period_s: 10
+              upscale_delay_s: 3
+              downscale_delay_s: 120
+            max_ongoing_requests: 16
+            health_check_period_s: 5
+            health_check_timeout_s: 120
+
+  rayClusterConfig:
+    rayVersion: "2.54.0"
+    enableInTreeAutoscaling: false
+
+    headGroupSpec:
+      rayStartParams:
+        num-cpus: "0"
+        num-gpus: "0"
+      template:
+        metadata:
+          labels:
+            app: nemotron-parse
+        spec:
+          containers:
+            - name: ray-head
+              image: rayproject/ray-llm:2.54.0-py311-cu128
+              env:
+                - name: RAY_GRAFANA_HOST
+                  value: "http://kube-prometheus-stack-grafana.kube-system.svc.cluster.local"
+                - name: RAY_GRAFANA_IFRAME_HOST
+                  value: "http://localhost:3000"
+                - name: RAY_PROMETHEUS_HOST
+                  value: "http://kube-prometheus-stack-prometheus.kube-system.svc.cluster.local:9090"
+              ports:
+                - containerPort: 8000
+                  name: serve
+                  protocol: TCP
+                - containerPort: 8080
+                  name: metrics
+                  protocol: TCP
+                - containerPort: 6379
+                  name: gcs
+                  protocol: TCP
+                - containerPort: 8265
+                  name: dashboard
+                  protocol: TCP
+                - containerPort: 10001
+                  name: client
+                  protocol: TCP
+              resources:
+                requests:
+                  cpu: 2
+                  memory: 8Gi
+              volumeMounts:
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 4Gi
+
+    workerGroupSpecs:
+      # ── Worker group on 2-GPU nodes ──────────────────────────────────────
+      # Two workers (one per 2-GPU node), each registering 2 GPUs.
+      # ray.serve.llm allocates 1 GPU per replica via placement bundles
+      # (tensor_parallel_size=1) → up to 2 replicas per 2-GPU worker.
+      - replicas: 2
+        minReplicas: 2
+        maxReplicas: 2
+        numOfHosts: 1
+        groupName: nemotron-gpu-group
+        rayStartParams:
+          num-gpus: "2"
+        template:
+          spec:
+            # Keep workers on the 2-GPU nodes only (4-GPU node is for MiniMax)
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: nvidia.com/gpu.count
+                          operator: In
+                          values: ["2"]
+              # Spread workers across the two 2-GPU nodes
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchExpressions:
+                        - key: ray.io/group
+                          operator: In
+                          values: ["nemotron-gpu-group"]
+                    topologyKey: kubernetes.io/hostname
+
+            initContainers:
+              # Download model from S3 + pre-warm pip cache in parallel.
+              # The runtime_env pip install runs when Ray creates the Serve
+              # replica, but with wheels already in the cache it completes
+              # in seconds instead of minutes.
+              - name: prepare-deps
+                image: rayproject/ray-llm:2.54.0-py311-cu128
+                command: ["/bin/bash", "-c"]
+                args:
+                  - |
+                    set -e
+
+                    # ── Model download (background) ──────────────────────
+                    (
+                      echo "[prepare-deps] Installing s5cmd..."
+                      wget -q -O /tmp/s5cmd.tar.gz \
+                        "https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_Linux-64bit.tar.gz"
+                      tar xzf /tmp/s5cmd.tar.gz -C /tmp && rm /tmp/s5cmd.tar.gz
+
+                      echo "[prepare-deps] Downloading Nemotron-Parse-v1.2 from S3..."
+                      /tmp/s5cmd --endpoint-url "https://${S3_ENDPOINT_HOSTNAME}" \
+                        sync "s3://${MODEL_BUCKET}/nvidia/NVIDIA-Nemotron-Parse-v1.2/*" /model-cache/
+                      echo "[prepare-deps] Model download complete."
+                    ) &
+                    MODEL_PID=$!
+
+                    # ── Pre-warm pip cache (background) ──────────────────
+                    # Populate the pip cache so the runtime_env pip install
+                    # hits only local wheels (seconds instead of minutes).
+                    (
+                      echo "[prepare-deps] Pre-downloading pip wheels..."
+                      pip download --quiet \
+                        --cache-dir=/home/ray/.cache/pip \
+                        --dest=/tmp/pip-wheels \
+                        "numpy<2.0" "cloudpickle>=3.1.0" \
+                        timm==1.0.22 albumentations==2.0.8 open_clip_torch
+                      echo "[prepare-deps] Pip cache warm complete."
+                    ) &
+                    PIP_PID=$!
+
+                    # Wait for both — fail if either fails
+                    FAIL=0
+                    wait $MODEL_PID || FAIL=1
+                    wait $PIP_PID  || FAIL=1
+                    if [ $FAIL -ne 0 ]; then
+                      echo "[prepare-deps] ERROR: one or more tasks failed"
+                      exit 1
+                    fi
+                    echo "[prepare-deps] All dependencies ready."
+                env:
+                  - name: S3_ENDPOINT_HOSTNAME
+                    valueFrom:
+                      secretKeyRef:
+                        name: obj-store-secret
+                        key: endpoint_hostname
+                  - name: AWS_ACCESS_KEY_ID
+                    valueFrom:
+                      secretKeyRef:
+                        name: obj-store-secret
+                        key: access_key
+                  - name: AWS_SECRET_ACCESS_KEY
+                    valueFrom:
+                      secretKeyRef:
+                        name: obj-store-secret
+                        key: secret_key
+                  - name: AWS_REGION
+                    valueFrom:
+                      secretKeyRef:
+                        name: obj-store-secret
+                        key: region
+                  - name: MODEL_BUCKET
+                    valueFrom:
+                      secretKeyRef:
+                        name: obj-store-secret
+                        key: bucket
+                volumeMounts:
+                  - name: model-cache
+                    mountPath: /model-cache
+                  - name: pip-cache
+                    mountPath: /home/ray/.cache/pip
+
+            containers:
+              - name: ray-worker
+                image: rayproject/ray-llm:2.54.0-py311-cu128
+                env:
+                  - name: HUGGING_FACE_HUB_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: hf-secret
+                        key: hf_token
+                resources:
+                  requests:
+                    cpu: 4
+                    memory: 16Gi
+                    nvidia.com/gpu: "2"
+                  limits:
+                    memory: 32Gi
+                    nvidia.com/gpu: "2"
+                volumeMounts:
+                  - name: model-cache
+                    mountPath: /model-cache
+                  - name: pip-cache
+                    mountPath: /home/ray/.cache/pip
+                  - name: dshm
+                    mountPath: /dev/shm
+            volumes:
+              - name: model-cache
+                emptyDir:
+                  sizeLimit: 8Gi   # Nemotron Parse v1.2 is <1B params (~2GB weights)
+              - name: pip-cache
+                emptyDir:
+                  sizeLimit: 4Gi
+              - name: dshm
+                emptyDir:
+                  medium: Memory
+                  sizeLimit: 4Gi

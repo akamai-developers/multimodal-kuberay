@@ -55,8 +55,9 @@ spec:
               upload_model() {
                 local hf_repo="$1"
                 local s3_prefix="$2"
+                local file_count
                 file_count=$(s5cmd --endpoint-url "$S3_ENDPOINT" \
-                  ls "s3://${MODEL_BUCKET}/${s3_prefix}/*" 2>/dev/null | wc -l || echo "0")
+                  ls "s3://${MODEL_BUCKET}/${s3_prefix}/*" 2>/dev/null | wc -l) || file_count=0
                 if [ "$file_count" -gt 5 ]; then
                   echo "SKIP ${hf_repo} already cached (${file_count} files)"
                   return 0
@@ -70,9 +71,11 @@ spec:
               }
 
               echo "=== Caching models ==="
-              upload_model "Qwen/Qwen3-VL-8B-Instruct" "Qwen/Qwen3-VL-8B-Instruct"
-              upload_model "nvidia/magpie_tts_multilingual_357m" "nvidia/magpie_tts_multilingual_357m" \
-                || echo "WARNING: TTS model upload failed"
+              # MiniMax-M2.5 — large frontier MoE; download may take 30-60+ minutes
+              upload_model "MiniMaxAI/MiniMax-M2.5" "MiniMaxAI/MiniMax-M2.5"
+              # Nemotron Parse v1.2 — sub-1B OCR model, fast download
+              upload_model "nvidia/NVIDIA-Nemotron-Parse-v1.2" "nvidia/NVIDIA-Nemotron-Parse-v1.2" \
+                || echo "WARNING: Nemotron Parse upload failed"
               echo "=== Done ==="
           env:
             - name: HUGGING_FACE_HUB_TOKEN
@@ -107,14 +110,14 @@ spec:
                   key: bucket
           resources:
             requests:
-              cpu: 2
-              memory: 4Gi
-            limits:
+              cpu: 4
               memory: 8Gi
+            limits:
+              memory: 16Gi
           volumeMounts:
             - name: staging
               mountPath: /staging
       volumes:
         - name: staging
           emptyDir:
-            sizeLimit: 25Gi
+            sizeLimit: 600Gi  # MiniMax-M2.5 is a large frontier MoE; needs ~400-500GB staging

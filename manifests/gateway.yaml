@@ -34,31 +34,11 @@ spec:
         type: PathPrefix
         value: /
     backendRefs:
-    - name: ray-serve-llm-serve-svc
+    - name: minimax-llm-svc
       port: 8000
     timeouts:
-      request: "180s"
-      backendRequest: "180s"
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: tts-route
-  namespace: default
-spec:
-  parentRefs:
-  - name: llm-gateway
-  rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: /v1/audio
-    backendRefs:
-    - name: ray-serve-tts-serve-svc
-      port: 8000
-    timeouts:
-      request: "180s"  # VLM→TTS pipeline needs more than the 15s default
-      backendRequest: "180s"
+      request: "300s"   # MiniMax M2.5 is a large MoE; synthesis can take time
+      backendRequest: "300s"
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
@@ -88,24 +68,5 @@ spec:
       name: llm-gateway
   timeout:
     http:
-      idleTimeout: "3600s"         # 1 hour — keep WebSocket alive during pauses
+      idleTimeout: "3600s"         # 1 hour — keep long-running research streams alive
       streamIdleTimeout: "1800s"   # 30 min — idle timeout per stream
----
-# Backend-side: keep connections to Ray Serve alive for long-running streams
-# and ensure the WebSocket upgrade type is explicitly enabled.
-apiVersion: gateway.envoyproxy.io/v1alpha1
-kind: BackendTrafficPolicy
-metadata:
-  name: tts-backend-policy
-  namespace: default
-spec:
-  targetRefs:
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      name: tts-route
-  timeout:
-    http:
-      connectionIdleTimeout: "3600s"   # 1 hour — match client-side
-      maxConnectionDuration: "7200s"   # 2 hours — hard cap
-  httpUpgrade:
-    - type: websocket

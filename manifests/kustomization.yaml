@@ -2,8 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - rayservice.yaml
-  - rayservice-tts.yaml
+  - rayservice-minimax.yaml
+  - nemotron-parse.yaml
+  - openwebui.yaml
   - gateway.yaml
   - model-upload-job.yaml
   - ray-podmonitor.yaml

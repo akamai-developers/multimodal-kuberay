@@ -4,7 +4,7 @@
 # This Makefile provides convenient targets for managing the infrastructure
 # and deployment lifecycle.
 
-.PHONY: help init plan apply destroy kubeconfig up ci down status test test-vision test-tts test-pipeline clean all
+.PHONY: help init plan apply destroy kubeconfig up ci down status test test-research clean all
 
 # Load .env file if it exists, and export all variables to subprocesses (Tilt)
 -include .env
@@ -28,10 +28,8 @@ help:
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make status      - Show cluster and deployment status"
-	@echo "  make test        - Run text-only API test (both models)"
-	@echo "  make test-vision - Run vision-language API test (both models)"
-	@echo "  make test-tts    - Run TTS API test"
-	@echo "  make test-pipeline - Run VLM→TTS pipeline test"
+	@echo "  make test        - Run deep research agent API smoke test"
+	@echo "  make test-research - Run full research pipeline test"
 	@echo "  make clean       - Clean local terraform and kubeconfig files"
 	@echo ""
 	@echo "Workflows:"
@@ -117,38 +115,22 @@ status:
 	@KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} kubectl cluster-info 2>/dev/null || echo "Cannot connect to cluster"
 	@echo ""
 	@echo "=== Kubernetes Resources ==="
-	@KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} kubectl get gateway,httproute,raycluster,rayservice -A 2>/dev/null || echo "No resources found or cluster not accessible"
+	@KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} kubectl get gateway,httproute,rayservice,deployment,svc -A 2>/dev/null || echo "No resources found or cluster not accessible"
 
 test:
 	@if [ ! -f scripts/test-llm.sh ]; then \
 		echo "ERROR: scripts/test-llm.sh not found"; \
 		exit 1; \
 	fi
-	@echo "Running text-only API test (both models)..."
+	@echo "Running deep research agent smoke test..."
 	@KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} ./scripts/test-llm.sh
 
-test-vision:
-	@if [ ! -f scripts/test-vision-llm.sh ]; then \
-		echo "ERROR: scripts/test-vision-llm.sh not found"; \
-		exit 1; \
-	fi
-	@echo "Running vision-language API test (both models)..."
-	@KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} ./scripts/test-vision-llm.sh
-
-test-tts:
-	@if [ ! -f scripts/test-tts.sh ]; then \
-		echo "ERROR: scripts/test-tts.sh not found"; \
-		exit 1; \
-	fi
-	@echo "Running TTS API test..."
-	@KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} ./scripts/test-tts.sh
-
-test-pipeline:
+test-research:
 	@if [ ! -f scripts/test-pipeline.sh ]; then \
 		echo "ERROR: scripts/test-pipeline.sh not found"; \
 		exit 1; \
 	fi
-	@echo "Running VLM→TTS pipeline test..."
+	@echo "Running research pipeline test..."
 	@KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} ./scripts/test-pipeline.sh
 
 clean:
@@ -175,7 +157,8 @@ clean:
 
 all: init apply up
 	@echo ""
-	@echo "=== Deployment Complete ==="
-	@echo "Tilt UI available at: http://localhost:10350"
-	@echo "Ray Dashboard available at: http://localhost:8265"
-	@echo "Ray Serve available at: http://localhost:8000"
+	@echo "=== Deep Research Agent Deployment Complete ==="
+	@echo "Tilt UI:             http://localhost:10350"
+	@echo "MiniMax Dashboard:   http://localhost:8265"
+	@echo "MiniMax API:         http://localhost:8000"
+	@echo "OpenWebUI:           check 'kubectl get svc openwebui-svc' for external IP"
