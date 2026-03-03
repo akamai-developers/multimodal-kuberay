@@ -111,13 +111,13 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"}\n/ ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"}\n/ 1000",
+          "expr": "max(ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000",
           "legendFormat": "MiniMax M2.5 (4×GPU)",
           "refId": "A"
         },
         {
           "datasource": "${datasource}",
-          "expr": "ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n/ ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n/ 1000",
+          "expr": "max(ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ max(ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ 1000",
           "legendFormat": "Nemotron Parse v1.2",
           "refId": "B"
         }
@@ -161,13 +161,13 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"}\n/ ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"}\n/ 1000",
+          "expr": "max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000",
           "legendFormat": "MiniMax M2.5 (4×GPU)",
           "refId": "A"
         },
         {
           "datasource": "${datasource}",
-          "expr": "ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n/ ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n/ 1000",
+          "expr": "max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ 1000",
           "legendFormat": "Nemotron Parse v1.2",
           "refId": "B"
         }
@@ -240,14 +240,14 @@
         },
         {
           "datasource": "${datasource}",
-          "expr": "ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"}\n/ ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"}\n/ 1000",
+          "expr": "max(ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000",
           "legendFormat": "Model Load (GPU)",
           "instant": true,
           "refId": "B"
         },
         {
           "datasource": "${datasource}",
-          "expr": "ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"}\n/ ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"}\n/ 1000",
+          "expr": "max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000",
           "legendFormat": "Total Startup",
           "instant": true,
           "refId": "C"
@@ -314,14 +314,14 @@
         },
         {
           "datasource": "${datasource}",
-          "expr": "ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n/ ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n/ 1000",
+          "expr": "max(ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ max(ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ 1000",
           "legendFormat": "Model Load (GPU)",
           "instant": true,
           "refId": "B"
         },
         {
           "datasource": "${datasource}",
-          "expr": "ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n/ ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n/ 1000",
+          "expr": "max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ 1000",
           "legendFormat": "Total Startup",
           "instant": true,
           "refId": "C"
@@ -376,7 +376,7 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "(\n  max(container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"})\n)\n/ (\n  ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"}\n  / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"}\n  / 1000\n) * 100",
+          "expr": "(\n  max(container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"})\n)\n/ (\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / 1000\n) * 100",
           "legendFormat": "MiniMax Cache %",
           "refId": "A"
         }
@@ -423,7 +423,7 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "(\n  max(container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n)\n/ (\n  ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  / 1000\n) * 100",
+          "expr": "(\n  max(container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n)\n/ (\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n  / 1000\n) * 100",
           "legendFormat": "Nemotron Cache %",
           "refId": "A"
         }
@@ -525,8 +525,8 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "increase(ray_serve_replica_initialization_latency_ms_sum{deployment!=\"OpenAiIngress\"}[5m])\n/ increase(ray_serve_replica_initialization_latency_ms_count{deployment!=\"OpenAiIngress\"}[5m])\n/ 1000",
-          "legendFormat": "{{deployment}}",
+          "expr": "max by (application) (\n  ray_serve_replica_initialization_latency_ms_sum{deployment!=\"OpenAiIngress\"}\n  / ray_serve_replica_initialization_latency_ms_count{deployment!=\"OpenAiIngress\"}\n) / 1000",
+          "legendFormat": "{{application}}",
           "refId": "A"
         }
       ]

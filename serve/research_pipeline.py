@@ -167,11 +167,24 @@ class Pipeline:
             except Exception as exc:
                 return {"paper": paper, "idx": idx, "pages": [], "error": str(exc)}
 
-        download_tasks = [download_and_render(p, i) for i, p in enumerate(papers, 1)]
-        rendered = await asyncio.gather(*download_tasks)
+        yield "Downloading & rendering PDFs...\n\n"
+
+        download_tasks = [
+            asyncio.ensure_future(download_and_render(p, i))
+            for i, p in enumerate(papers, 1)
+        ]
+        rendered: list[dict] = []
+        for coro in asyncio.as_completed(download_tasks):
+            result = await coro
+            rendered.append(result)
+            if result["error"]:
+                yield f"  ⚠ Paper [{result['idx']}] — download failed: {result['error']}\n"
+            else:
+                yield f"  📄 Paper [{result['idx']}] — {len(result['pages'])} pages rendered\n"
+        rendered.sort(key=lambda r: r["idx"])
 
         total_pages = sum(len(r["pages"]) for r in rendered)
-        yield f"Downloaded & rendered **{total_pages}** pages across {len(papers)} papers.\n\n"
+        yield f"\nDownloaded & rendered **{total_pages}** pages across {len(papers)} papers.\n\n"
         yield f"Sending pages to Nemotron Parse ({OCR_CONCURRENCY} at a time)...\n\n"
 
         # Phase 2b: OCR helper
@@ -260,6 +273,9 @@ class Pipeline:
 
         system_prompt = (
             "You are a world-class research assistant. "
+            "IMPORTANT: You MUST write your ENTIRE response exclusively in English — "
+            "including all internal reasoning, analysis, and thinking. "
+            "Never switch to Chinese, Japanese, or any other non-English language.\n\n"
             "Given a research topic and excerpts from parsed academic papers, "
             "write a deep, well-structured research synthesis. Follow these rules:\n"
             "1. Use inline citation numbers, e.g. [1], [2], after every factual claim.\n"
@@ -288,7 +304,7 @@ class Pipeline:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=1.0,
+            temperature=0.7,
             top_p=0.95,
             stream=True,
         )
