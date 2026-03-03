@@ -128,10 +128,12 @@ class Pipeline:
             yield f"{i}. **[{p.title}]({p.entry_id})** — {authors} ({p.published.year})\n"
         yield "\n"
 
-        # ── 2. Fully-parallel OCR with Nemotron Parse ────────────────────────
-        # All pages from all papers are sent concurrently to maximise load
-        # on Nemotron Parse replicas and trigger Ray Serve autoscaling.
-        yield "---\n\n**Step 2/3 — Parsing papers with Nemotron Parse OCR (parallel)...**\n\n"
+        # ── 2. Sliding-window OCR with Nemotron Parse ────────────────────────
+        # Up to OCR_CONCURRENCY requests fly at once.  As the queue builds,
+        # Ray Serve autoscaling spins up new replicas — making scaling
+        # visibly observable during a demo.
+        OCR_CONCURRENCY = 5
+        yield "---\n\n**Step 2/3 — Parsing papers with Nemotron Parse OCR...**\n\n"
 
         parse_client = openai.AsyncOpenAI(
             base_url=v.NEMOTRON_PARSE_API_URL,
@@ -168,10 +170,11 @@ class Pipeline:
         download_tasks = [download_and_render(p, i) for i, p in enumerate(papers, 1)]
         rendered = await asyncio.gather(*download_tasks)
 
-        yield f"Downloaded & rendered {sum(len(r['pages']) for r in rendered)} pages across {len(papers)} papers.\n\n"
-        yield "Sending **all pages** to Nemotron Parse simultaneously...\n\n"
+        total_pages = sum(len(r["pages"]) for r in rendered)
+        yield f"Downloaded & rendered **{total_pages}** pages across {len(papers)} papers.\n\n"
+        yield f"Sending pages to Nemotron Parse ({OCR_CONCURRENCY} at a time)...\n\n"
 
-        # Phase 2b: Fire ALL page OCR requests concurrently (flat list)
+        # Phase 2b: OCR helper
         async def ocr_page(b64_img: str) -> str:
             """OCR a single page image via Nemotron Parse."""
             ocr_prompt = (
@@ -204,27 +207,38 @@ class Pipeline:
             )
             return resp.choices[0].message.content or ""
 
-        # Build flat list of (paper_idx, page_idx, future) for all pages
-        flat_ocr_tasks: list[tuple[int, int, asyncio.Task]] = []
+        # ── Sliding-window OCR: up to OCR_CONCURRENCY at a time ─────────
+        sem = asyncio.Semaphore(OCR_CONCURRENCY)
+        paper_page_texts: dict[int, list[tuple[int, str]]] = {}
+        succeeded = 0
+        completed = 0
+
+        # Build flat list of (paper_idx, page_idx, base64_img)
+        flat_pages: list[tuple[int, int, str]] = []
         for r in rendered:
             for page_idx, b64_img in enumerate(r["pages"]):
-                task = asyncio.ensure_future(ocr_page(b64_img))
-                flat_ocr_tasks.append((r["idx"], page_idx, task))
+                flat_pages.append((r["idx"], page_idx, b64_img))
 
-        total_pages = len(flat_ocr_tasks)
-        yield f"Fired **{total_pages}** concurrent OCR requests.\n\n"
+        async def bounded_ocr(paper_idx: int, page_idx: int, b64_img: str) -> tuple[int, int, str]:
+            async with sem:
+                try:
+                    text = await ocr_page(b64_img)
+                except Exception as exc:
+                    text = f"[OCR error: {exc}]"
+                return (paper_idx, page_idx, text)
 
-        # Await all OCR results
-        all_results = await asyncio.gather(
-            *(task for _, _, task in flat_ocr_tasks),
-            return_exceptions=True,
-        )
-
-        # Reassemble page texts per paper
-        paper_page_texts: dict[int, list[tuple[int, str]]] = {}
-        for (paper_idx, page_idx, _), result in zip(flat_ocr_tasks, all_results):
-            text = result if isinstance(result, str) else f"[OCR error: {result}]"
+        # Stream progress as tasks complete
+        tasks = [
+            asyncio.ensure_future(bounded_ocr(pi, pg, img))
+            for pi, pg, img in flat_pages
+        ]
+        for coro in asyncio.as_completed(tasks):
+            paper_idx, page_idx, text = await coro
+            completed += 1
+            if not text.startswith("[OCR error"):
+                succeeded += 1
             paper_page_texts.setdefault(paper_idx, []).append((page_idx, text))
+            yield f"  ✓ Page {completed}/{total_pages} (paper {paper_idx}, p{page_idx + 1})\n"
 
         # Sort pages within each paper and build final records
         parsed: list[dict] = []
@@ -237,8 +251,7 @@ class Pipeline:
                 full_text = "\n\n".join(text for _, text in page_entries)
             parsed.append(_paper_record(r["paper"], full_text, r["idx"]))
 
-        succeeded = sum(1 for r in all_results if isinstance(r, str))
-        yield f"OCR complete — **{succeeded}/{total_pages}** pages parsed successfully.\n\n"
+        yield f"\nOCR complete — **{succeeded}/{total_pages}** pages parsed successfully.\n\n"
 
         # ── 3. Synthesis with MiniMax M2.5 ───────────────────────────────────
         yield "---\n\n**Step 3/3 — Synthesising with MiniMax M2.5...**\n\n---\n\n"

@@ -67,9 +67,9 @@ spec:
               - open_clip_torch
           deployment_config:
             autoscaling_config:
-              min_replicas: 2
+              min_replicas: 1
               max_replicas: 4
-              target_ongoing_requests: 1
+              target_ongoing_requests: 1  # Window of 5 concurrent → ceil(5/1) = 5 → capped at 4
               metrics_interval_s: 2
               look_back_period_s: 10
               upscale_delay_s: 3

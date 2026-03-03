@@ -1,0 +1,518 @@
+/* ============================================================================
+ * Akamai Brand Guidelines 2025 — Custom CSS for Open WebUI
+ * 
+ * Primary:   Navy #002F6C | Blue #00A4EB | Orange #FFB800 | White #FFFFFF
+ * Secondary: Lavender #7A7CFF | Deep Violet #201547 | Green #00CC63
+ *            Electric Blue #0050FF | Sand #FAE8C3 | Red #F0281F
+ * Tertiary:  Black #000000 | Grey1 #2A2A2B | Grey2 #4B4A4D | Grey3 #7C7B7F
+ *            Grey4 #A9A7AD | Grey5 #CECECE | Grey6 #F5F5F5
+ * ============================================================================ */
+
+/* --------------------------------------------------------------------------
+ * 1. TAILWIND COLOR VARIABLE OVERRIDES (Dark Mode — Akamai Navy/Blue palette)
+ * -------------------------------------------------------------------------- */
+
+/* Dark mode: remap gray scale to Akamai Navy tones */
+.dark {
+  --color-gray-50:  #e8eef5;   /* lightest navy tint */
+  --color-gray-100: #c6d4e6;
+  --color-gray-200: #8fa6c7;
+  --color-gray-300: #5a7ba8;
+  --color-gray-400: #3d6494;
+  --color-gray-500: #2a5080;
+  --color-gray-600: #1e3f6b;
+  --color-gray-700: #0d2a52;   /* close to Akamai Navy */
+  --color-gray-800: #002352;   /* deep navy */
+  --color-gray-850: #001d45;   /* darker navy */
+  --color-gray-900: #001838;   /* darkest navy bg */
+  --color-gray-950: #001230;   /* near-black navy */
+
+  /* Remap blue scale to Akamai Blue */
+  --color-blue-50:  #e6f6fd;
+  --color-blue-100: #b3e4fa;
+  --color-blue-200: #80d2f7;
+  --color-blue-300: #4dc0f4;
+  --color-blue-400: #1aaef1;
+  --color-blue-500: #00A4EB;   /* Akamai Blue */
+  --color-blue-600: #0093d4;
+  --color-blue-700: #0077ac;
+  --color-blue-800: #005b84;
+  --color-blue-900: #003f5c;
+
+  /* Remap green to Akamai Green */
+  --color-green-400: #33d682;
+  --color-green-500: #00CC63;   /* Akamai Green */
+  --color-green-600: #00b357;
+  --color-green-700: #009a4b;
+  --color-green-800: #00803e;
+
+  /* Remap orange/yellow to Akamai Orange */
+  --color-orange-400: #ffc633;
+  --color-orange-500: #FFB800;  /* Akamai Orange */
+  --color-orange-600: #e6a600;
+  --color-orange-800: #996e00;
+
+  --color-yellow-300: #ffd24d;
+  --color-yellow-500: #FFB800;  /* Akamai Orange */
+}
+
+/* Light mode overrides */
+:root {
+  --color-gray-50:  #F5F5F5;   /* Akamai Grey 6 */
+  --color-gray-100: #eaedf2;
+  --color-gray-200: #CECECE;   /* Akamai Grey 5 */
+  --color-gray-300: #A9A7AD;   /* Akamai Grey 4 */
+  --color-gray-400: #7C7B7F;   /* Akamai Grey 3 */
+  --color-gray-500: #4B4A4D;   /* Akamai Grey 2 */
+  --color-gray-600: #2A2A2B;   /* Akamai Grey 1 */
+  --color-gray-700: #1a1a1b;
+  --color-gray-800: #111112;
+  --color-gray-850: #0a0a0b;
+  --color-gray-900: #000000;   /* Akamai True Black */
+  --color-gray-950: #000000;
+
+  --color-blue-500: #00A4EB;   /* Akamai Blue */
+  --color-blue-600: #0093d4;
+  --color-blue-700: #002F6C;   /* Akamai Navy for deeper accents */
+}
+
+/* --------------------------------------------------------------------------
+ * 2. SIDEBAR — Akamai Navy deep background
+ * -------------------------------------------------------------------------- */
+
+/* Sidebar container */
+.dark #sidebar {
+  background-color: #000000 !important;
+}
+
+#sidebar {
+  background-color: #002F6C !important;
+  color: #FFFFFF !important;
+}
+
+/* Light mode sidebar — force white/light text on navy background */
+:root #sidebar *,
+:root #sidebar button,
+:root #sidebar a,
+:root #sidebar span,
+:root #sidebar p,
+:root #sidebar div,
+:root #sidebar h1,
+:root #sidebar h2,
+:root #sidebar h3,
+:root #sidebar svg {
+  color: #e8eef5 !important;
+  fill: #e8eef5;
+}
+
+:root #sidebar button:hover,
+:root #sidebar a:hover {
+  color: #FFFFFF !important;
+  background-color: rgba(0, 164, 235, 0.18) !important;
+}
+
+/* Light mode sidebar — catch ALL white/light backgrounds */
+:root #sidebar .bg-white,
+:root #sidebar .bg-white\/5,
+:root #sidebar .bg-white\/10,
+:root #sidebar .bg-white\/20,
+:root #sidebar .bg-white\/50,
+:root #sidebar .bg-white\/80,
+:root #sidebar .bg-white\/90,
+:root #sidebar .bg-white\/95,
+:root #sidebar .bg-gray-50,
+:root #sidebar .bg-gray-50\/50,
+:root #sidebar .bg-gray-50\/70,
+:root #sidebar .bg-gray-100,
+:root #sidebar .bg-gray-100\/50,
+:root #sidebar .bg-gray-100\/70,
+:root #sidebar .bg-gray-100\/80,
+:root #sidebar .bg-gray-200,
+:root #sidebar .bg-gray-200\/50,
+:root #sidebar .bg-gray-200\/80,
+:root #sidebar .bg-gray-300 {
+  background-color: transparent !important;
+}
+
+/* Light mode sidebar active/selected item */
+:root #sidebar .bg-gray-50.active,
+:root #sidebar [class*="bg-gray-"]:has(> .truncate),
+:root #sidebar a.bg-gray-50,
+:root #sidebar a.bg-white,
+:root #sidebar li.bg-gray-50,
+:root #sidebar div.bg-gray-50,
+:root #sidebar div.bg-white,
+:root #sidebar button.bg-gray-50,
+:root #sidebar button.bg-white {
+  background-color: rgba(0, 164, 235, 0.2) !important;
+  color: #FFFFFF !important;
+}
+
+/* Light mode sidebar — prevent any child from being white/light bg */
+:root #sidebar [class*="bg-white"],
+:root #sidebar [class*="bg-gray-5"],
+:root #sidebar [class*="bg-gray-1"],
+:root #sidebar [class*="bg-gray-2"] {
+  background-color: transparent !important;
+}
+
+/* Light mode sidebar hover backgrounds — translucent blue, never white */
+:root #sidebar .hover\:bg-gray-50:hover,
+:root #sidebar .hover\:bg-gray-100:hover,
+:root #sidebar .hover\:bg-gray-200:hover,
+:root #sidebar .hover\:bg-white:hover,
+:root #sidebar .hover\:bg-white\/80:hover,
+:root #sidebar *:hover > .bg-white,
+:root #sidebar [class*="hover\:bg-"]:hover {
+  background-color: rgba(0, 164, 235, 0.18) !important;
+  color: #FFFFFF !important;
+}
+
+/* Light mode sidebar gradient overlays (fade-out text) — navy-tinted */
+:root #sidebar [class*="from-gray"],
+:root #sidebar [class*="from-white"],
+:root #sidebar [class*="to-gray"],
+:root #sidebar [class*="to-white"] {
+  --tw-gradient-from: transparent !important;
+  --tw-gradient-to: #002F6C !important;
+  background-image: none !important;
+}
+
+/* Light mode sidebar muted/secondary text */
+:root #sidebar .text-gray-400,
+:root #sidebar .text-gray-500,
+:root #sidebar .text-gray-600,
+:root #sidebar .text-gray-700,
+:root #sidebar .text-gray-800,
+:root #sidebar .text-gray-900,
+:root #sidebar .text-black {
+  color: #c6d4e6 !important;
+}
+
+/* Light mode sidebar borders */
+:root #sidebar .border-gray-50,
+:root #sidebar .border-gray-100,
+:root #sidebar .border-gray-200,
+:root #sidebar .border-gray-300 {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Light mode sidebar input fields */
+:root #sidebar input,
+:root #sidebar textarea {
+  background-color: rgba(0, 0, 0, 0.2) !important;
+  color: #FFFFFF !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+:root #sidebar input::placeholder,
+:root #sidebar textarea::placeholder {
+  color: rgba(255, 255, 255, 0.5) !important;
+}
+
+/* Sidebar text colors (dark mode) */
+.dark #sidebar *,
+.dark #sidebar button,
+.dark #sidebar a,
+.dark #sidebar span {
+  color: #c6d4e6 !important;
+}
+
+.dark #sidebar button:hover,
+.dark #sidebar a:hover {
+  color: #FFFFFF !important;
+  background-color: rgba(0, 164, 235, 0.15) !important;
+}
+
+/* Active sidebar item */
+.dark #sidebar .bg-gray-850,
+.dark #sidebar .bg-gray-900 {
+  background-color: rgba(0, 164, 235, 0.2) !important;
+}
+
+/* Dark sidebar gradient overlays — fade to black */
+.dark #sidebar [class*="from-gray"],
+.dark #sidebar [class*="from-white"],
+.dark #sidebar [class*="to-gray"],
+.dark #sidebar [class*="to-white"] {
+  --tw-gradient-from: transparent !important;
+  --tw-gradient-to: #000000 !important;
+  background-image: none !important;
+}
+
+/* Sidebar new chat button */
+.dark #sidebar button.bg-gray-50,
+.dark #sidebar button.bg-white {
+  background-color: #00A4EB !important;
+  color: #FFFFFF !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 3. PRIMARY BUTTONS — Akamai Blue with Orange hover
+ * -------------------------------------------------------------------------- */
+
+/* Primary action buttons (Send, Create, etc.) */
+.dark button.bg-black,
+.dark button[type="submit"].bg-black {
+  background-color: #00A4EB !important;
+  color: #FFFFFF !important;
+  border-color: #00A4EB !important;
+}
+
+.dark button.bg-black:hover,
+.dark button[type="submit"].bg-black:hover {
+  background-color: #0093d4 !important;
+}
+
+/* Toggle switches when active */
+.dark .peer-checked\:bg-blue-600:is(:where(.peer):checked ~ *) {
+  background-color: #00A4EB !important;
+}
+
+/* Links and accent text */
+.dark .text-blue-500,
+.dark .text-blue-400,
+.dark a[href] {
+  color: #00A4EB !important;
+}
+
+.dark .text-blue-500:hover,
+.dark .text-blue-400:hover,
+.dark a[href]:hover {
+  color: #4dc0f4 !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 4. CHAT AREA — Navy-tinted dark background
+ * -------------------------------------------------------------------------- */
+
+/* Main chat background */
+.dark .bg-white,
+html.dark body {
+  background-color: #001d45 !important;
+}
+
+/* Chat message area */
+.dark .bg-gray-50 {
+  background-color: #001838 !important;
+}
+
+/* User message bubbles — slightly lighter navy */
+.dark .bg-gray-100,
+.dark .bg-gray-100\/50 {
+  background-color: rgba(0, 80, 255, 0.08) !important;
+}
+
+/* Input area */
+.dark .bg-gray-50\/50,
+.dark .bg-gray-50\/70 {
+  background-color: rgba(0, 35, 82, 0.6) !important;
+}
+
+/* Chat input box */
+.dark textarea,
+.dark input[type="text"],
+.dark .bg-gray-850 {
+  background-color: #002352 !important;
+  border-color: #1e3f6b !important;
+  color: #e8eef5 !important;
+}
+
+.dark textarea:focus,
+.dark input[type="text"]:focus {
+  border-color: #00A4EB !important;
+  box-shadow: 0 0 0 2px rgba(0, 164, 235, 0.25) !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 5. HEADER / TOP BAR
+ * -------------------------------------------------------------------------- */
+
+/* Top navigation bar */
+.dark .bg-gray-900,
+.dark nav.bg-gray-900 {
+  background-color: #001230 !important;
+  border-bottom: 1px solid #1e3f6b !important;
+}
+
+/* Model selector and header elements */
+.dark .bg-gray-900\/60 {
+  background-color: rgba(0, 18, 48, 0.85) !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 6. DROPDOWNS & MODALS — Navy-tinted surfaces
+ * -------------------------------------------------------------------------- */
+
+.dark .bg-gray-800,
+.dark [role="menu"],
+.dark [role="dialog"] .bg-gray-800,
+.dark [role="dialog"] .bg-gray-900 {
+  background-color: #002352 !important;
+  border-color: #1e3f6b !important;
+}
+
+.dark .bg-gray-700,
+.dark [role="menuitem"]:hover {
+  background-color: #0d2a52 !important;
+}
+
+/* Dropdown hover states */
+.dark .hover\:bg-gray-850:hover,
+.dark .hover\:bg-gray-900:hover,
+.dark .hover\:bg-gray-950:hover {
+  background-color: rgba(0, 164, 235, 0.12) !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 7. SCROLLBAR — Akamai Blue tint
+ * -------------------------------------------------------------------------- */
+
+.dark ::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background-color: #1e3f6b;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background-color: #00A4EB;
+}
+
+/* --------------------------------------------------------------------------
+ * 8. STATUS INDICATORS — Akamai semantic colors
+ * -------------------------------------------------------------------------- */
+
+.dark .bg-emerald-500,
+.dark .bg-green-500,
+.dark .text-green-500 {
+  color: #00CC63 !important;
+}
+
+.dark .bg-red-500,
+.dark .text-red-500 {
+  color: #F0281F !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 9. CODE BLOCKS — Deep violet tint (Akamai Secondary)
+ * -------------------------------------------------------------------------- */
+
+.dark pre,
+.dark code {
+  background-color: #0f1b35 !important;
+  border-color: #1e3f6b !important;
+}
+
+.dark .prose pre,
+.dark .prose code {
+  background-color: #0f1b35 !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 10. AKAMAI BRAND ACCENT STRIPE — Top border
+ * -------------------------------------------------------------------------- */
+
+html.dark body::before,
+html:not(.dark) body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #002F6C 0%, #00A4EB 40%, #FFB800 70%, #00CC63 100%);
+  z-index: 99999;
+  pointer-events: none;
+}
+
+/* Compensate for the accent stripe */
+html.dark body,
+html:not(.dark) body {
+  padding-top: 3px !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 11. SELECTION & FOCUS RINGS — Akamai Blue
+ * -------------------------------------------------------------------------- */
+
+.dark ::selection {
+  background-color: rgba(0, 164, 235, 0.3);
+  color: #FFFFFF;
+}
+
+.dark *:focus-visible {
+  outline-color: #00A4EB !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 12. LOADING SPINNERS & ANIMATIONS — Akamai Blue
+ * -------------------------------------------------------------------------- */
+
+.dark .animate-spin {
+  color: #00A4EB !important;
+}
+
+/* Pulse animations */
+.dark .animate-pulse {
+  color: #00A4EB !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 13. BORDERS — Navy-tinted
+ * -------------------------------------------------------------------------- */
+
+.dark .border-gray-50,
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-800,
+.dark .border-gray-900 {
+  border-color: #1e3f6b !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 14. BADGES & TAGS — Akamai accent colors
+ * -------------------------------------------------------------------------- */
+
+.dark .bg-blue-500\/20,
+.dark .bg-blue-100\/10,
+.dark .bg-blue-300\/10 {
+  background-color: rgba(0, 164, 235, 0.15) !important;
+}
+
+.dark .bg-green-500\/20 {
+  background-color: rgba(0, 204, 99, 0.15) !important;
+}
+
+.dark .bg-yellow-500\/20,
+.dark .bg-yellow-100\/20 {
+  background-color: rgba(255, 184, 0, 0.15) !important;
+}
+
+.dark .bg-red-500\/20,
+.dark .bg-red-600\/10 {
+  background-color: rgba(240, 40, 31, 0.12) !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 15. PLACEHOLDER TEXT
+ * -------------------------------------------------------------------------- */
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #5a7ba8 !important;
+  opacity: 0.8 !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 16. TOOLTIP & POPOVER
+ * -------------------------------------------------------------------------- */
+
+.dark [role="tooltip"],
+.dark .tooltip {
+  background-color: #002352 !important;
+  border-color: #1e3f6b !important;
+  color: #e8eef5 !important;
+}

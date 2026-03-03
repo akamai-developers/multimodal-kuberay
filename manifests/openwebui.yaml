@@ -73,10 +73,32 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /app/backend/data
+            - name: custom-css
+              mountPath: /app/backend/open_webui/static/custom.css
+              subPath: custom.css
+              readOnly: true
+            - name: logos
+              mountPath: /app/backend/open_webui/static/logo.png
+              subPath: logo.png
+              readOnly: true
+            - name: logos
+              mountPath: /app/backend/open_webui/static/splash.png
+              subPath: splash.png
+              readOnly: true
+            - name: logos
+              mountPath: /app/backend/open_webui/static/splash-dark.png
+              subPath: splash-dark.png
+              readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: openwebui-data
+        - name: custom-css
+          configMap:
+            name: openwebui-custom-css
+        - name: logos
+          configMap:
+            name: openwebui-logos
 ---
 # ─────────────────────────────────────────────────────────────────────────────
 # OpenWebUI Service — LoadBalancer gives it its own public IP so it can be

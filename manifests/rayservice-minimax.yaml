@@ -42,7 +42,7 @@ spec:
             model_source: /model-cache
           engine_kwargs:
             dtype: bfloat16
-            max_model_len: 65536          # Start conservative; model native context is larger
+            max_model_len: 65536          # Pipeline sends ~33K tokens; do not reduce below that
             gpu_memory_utilization: 0.92  # 4x96GB = 384GB VRAM, aggressive utilisation is fine
             tensor_parallel_size: 4       # All 4 Blackwells on the large node
             trust_remote_code: true       # Required for minimax_m2 architecture
