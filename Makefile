@@ -101,7 +101,34 @@ down:
 	@if [ -z "$$KUBECONFIG" ]; then \
 		export KUBECONFIG=$$(pwd)/kubeconfig; \
 	fi
-	KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} tilt down
+	@echo "=== Tearing down Tilt resources ==="
+	KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} tilt down || true
+	@echo ""
+	@echo "=== Cleaning up residual resources ==="
+	@KC=$${KUBECONFIG:-$$(pwd)/kubeconfig}; \
+	echo "Removing kube-prometheus-stack-kubelet service..."; \
+	KUBECONFIG=$$KC kubectl delete svc kube-prometheus-stack-kubelet -n kube-system --ignore-not-found; \
+	echo "Removing NVIDIA node labels and annotations..."; \
+	for node in $$(KUBECONFIG=$$KC kubectl get nodes -o name); do \
+		KUBECONFIG=$$KC kubectl label $$node --overwrite $$(KUBECONFIG=$$KC kubectl get $$node -o json \
+			| python3 -c "import json,sys; labels=json.load(sys.stdin)['metadata'].get('labels',{}); print(' '.join(k+'-' for k in labels if k.startswith('nvidia.com/')))" 2>/dev/null) 2>/dev/null || true; \
+		KUBECONFIG=$$KC kubectl annotate $$node $$(KUBECONFIG=$$KC kubectl get $$node -o json \
+			| python3 -c "import json,sys; annots=json.load(sys.stdin)['metadata'].get('annotations',{}); print(' '.join(k+'-' for k in annots if k.startswith('nvidia.com/')))" 2>/dev/null) 2>/dev/null || true; \
+	done; \
+	echo "Deleting Tilt-created namespaces..."; \
+	for ns in gpu-operator envoy-gateway-system kueue-system; do \
+		KUBECONFIG=$$KC kubectl delete ns $$ns --ignore-not-found --wait=false; \
+	done; \
+	echo "Cleaning up Tilt-installed CRDs..."; \
+	KUBECONFIG=$$KC kubectl get crd -o name 2>/dev/null \
+		| grep -E 'nvidia\.com|monitoring\.coreos\.com|envoyproxy\.io|gateway\.networking\.k8s\.io|kueue\.x-k8s\.io|ray\.io' \
+		| xargs -r KUBECONFIG=$$KC kubectl delete --ignore-not-found 2>/dev/null || true; \
+	echo "Waiting for namespace deletion..."; \
+	for ns in gpu-operator envoy-gateway-system kueue-system; do \
+		KUBECONFIG=$$KC kubectl wait --for=delete ns/$$ns --timeout=60s 2>/dev/null || true; \
+	done; \
+	echo ""; \
+	echo "=== Cleanup complete — vanilla LKE cluster restored ==="
 
 # ============================================================================
 # Utility Targets
