@@ -22,6 +22,10 @@ load("ext://secret", "secret_from_dict")
 # Set a longer upsert timeout to avoid apply timeouts during heavy operations
 update_settings(k8s_upsert_timeout_secs=900)
 
+allow_k8s_contexts('lke573757-ctx')
+# Capture start time for total deployment timing
+_tilt_start_ts = str(local("date +%s")).strip()
+
 # ░█░█░█▀█░█▀▄░▀█▀░█▀█░█▀▄░█░░░█▀▀░█▀▀
 # ░▀▄▀░█▀█░█▀▄░░█░░█▀█░█▀▄░█░░░█▀▀░▀▀█
 # ░░▀░░▀░▀░▀░▀░▀▀▀░▀░▀░▀▀░░▀▀▀░▀▀▀░▀▀▀
@@ -142,7 +146,7 @@ helm_resource(
     "kube-prometheus-stack",
     "prometheus-community/kube-prometheus-stack",
     namespace="kube-system",
-    resource_deps=["prometheus-community"],
+    resource_deps=["prometheus-community", "kueue"],
     flags=[
         "--values=./hack/monitoring-values.yaml",
         "--timeout=600s",
@@ -294,7 +298,7 @@ k8s_resource(
 k8s_yaml("manifests/model-upload-job.yaml")
 k8s_resource(
     "model-upload",
-    resource_deps=["hf-secret", "obj-store-secret"],
+    resource_deps=["hf-secret", "obj-store-secret", "kueue"],
     labels=["kuberay"],
 )
 
@@ -316,7 +320,7 @@ k8s_resource(
 
 local_resource(
     "minimax-dashboard",
-    serve_cmd="kubectl port-forward svc/minimax-llm-svc 8265:8265 8000:8000",
+    serve_cmd="until kubectl get endpoints minimax-llm-svc -o jsonpath='{.subsets[0].addresses}' 2>/dev/null | grep -q ip; do echo 'Waiting for minimax-llm-svc endpoints...'; sleep 10; done && kubectl port-forward svc/minimax-llm-svc 8265:8265 8000:8000",
     resource_deps=["minimax-service"],
     labels=["kuberay"],
     links=[link("http://localhost:8265", "MiniMax Ray Dashboard")],
@@ -372,13 +376,13 @@ k8s_resource(
     objects=[
         "openwebui-data:persistentvolumeclaim:default",
     ],
-    resource_deps=["openwebui-secret", "minimax-service"],
+    resource_deps=["openwebui-secret", "minimax-service", "kueue"],
     labels=["openwebui"],
 )
 
 k8s_resource(
     "openwebui-pipelines",
-    resource_deps=["research-pipeline-code", "openwebui-secret"],
+    resource_deps=["research-pipeline-code", "openwebui-secret", "kueue"],
     labels=["openwebui"],
 )
 
@@ -425,4 +429,24 @@ k8s_resource(
     objects=ray_dashboard_cms,
     resource_deps=["kube-prometheus-stack"],
     labels=["monitoring"],
+)
+
+# ░▀█▀░▀█▀░█▄█░▀█▀░█▀█░█▀▀
+# ░░█░░░█░░█░█░░█░░█░█░█░█
+# ░░▀░░▀▀▀░▀░▀░▀▀▀░▀░▀░▀▀▀
+
+# Print total deployment time once every resource is ready.
+_timer_cmd = "START=%s; NOW=$(date +%%s); ELAPSED=$((NOW - START)); MIN=$((ELAPSED / 60)); SEC=$((ELAPSED %% 60)); echo ''; echo '══════════════════════════════════════════'; echo \"  ✅ All resources ready in ${MIN}m ${SEC}s\"; echo '══════════════════════════════════════════'; echo ''" % _tilt_start_ts
+local_resource(
+    "deployment-timer",
+    cmd=_timer_cmd,
+    resource_deps=[
+        "openwebui",
+        "openwebui-pipelines",
+        "minimax-service",
+        "nemotron-parse-service",
+        "llm-gateway",
+        "ray-grafana-dashboards",
+    ],
+    labels=["status"],
 )
