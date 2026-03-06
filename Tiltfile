@@ -270,8 +270,11 @@ k8s_resource(
 # ░█▀▄░█▀▀░▀▀█░█▀▀░█▀█░█▀▄░█░░░█▀█░░░█▀▀░░█░░█▀▀░█▀▀░█░░░░█░░█░█░█▀▀
 # ░▀░▀░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀░▀░▀▀▀░▀░▀░░░▀░░░▀▀▀░▀░░░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀▀▀
 
-# Research Pipeline ConfigMap — auto-updates when serve/research_pipeline.py changes
+# Research Pipeline ConfigMap — auto-updates when any serve/*.py pipeline changes
 research_pipeline_code = str(read_file("serve/research_pipeline.py"))
+agentic_pipeline_code = str(read_file("serve/agentic_research_pipeline.py"))
+toolcall_pipeline_code = str(read_file("serve/toolcall_research_pipeline.py"))
+mcp_pipeline_code = str(read_file("serve/mcp_research_pipeline.py"))
 k8s_yaml(encode_yaml({
     "apiVersion": "v1",
     "kind": "ConfigMap",
@@ -281,6 +284,9 @@ k8s_yaml(encode_yaml({
     },
     "data": {
         "research_pipeline.py": research_pipeline_code,
+        "agentic_research_pipeline.py": agentic_pipeline_code,
+        "toolcall_research_pipeline.py": toolcall_pipeline_code,
+        "mcp_research_pipeline.py": mcp_pipeline_code,
     },
 }))
 
@@ -370,11 +376,38 @@ k8s_resource(
     labels=["openwebui"],
 )
 
+# OpenWebUI custom CSS ConfigMap — Akamai brand overrides
+custom_css_code = str(read_file("assets/custom.css"))
+k8s_yaml(encode_yaml({
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+        "name": "openwebui-custom-css",
+        "namespace": "default",
+    },
+    "data": {
+        "custom.css": custom_css_code,
+    },
+}))
+
+# OpenWebUI logos ConfigMap — Akamai brand logos for splash & main icon
+# Binary PNG files need base64 encoding; kubectl --dry-run handles this cleanly.
+_logos_cmd = (
+    "kubectl create configmap openwebui-logos"
+    + " --from-file=logo.png='assets/Akamai Cloud - Horizontal.png'"
+    + " --from-file=splash.png='assets/Akamai Cloud - Stacked.png'"
+    + " --from-file=splash-dark.png='assets/Akamai Cloud - Stacked WHITE.png'"
+    + " --namespace=default --dry-run=client -o yaml"
+)
+k8s_yaml(local(_logos_cmd, quiet=True))
+
 k8s_yaml("manifests/openwebui.yaml")
 k8s_resource(
     "openwebui",
     objects=[
         "openwebui-data:persistentvolumeclaim:default",
+        "openwebui-custom-css:configmap",
+        "openwebui-logos:configmap",
     ],
     resource_deps=["openwebui-secret", "minimax-service", "kueue"],
     labels=["openwebui"],
@@ -384,6 +417,64 @@ k8s_resource(
     "openwebui-pipelines",
     resource_deps=["research-pipeline-code", "openwebui-secret", "kueue"],
     labels=["openwebui"],
+)
+
+# ░█▄█░█▀▀░█▀█░░░█▀▀░█▀▀░█▀▄░█░█░█▀▀░█▀▄░█▀▀
+# ░█░█░█░░░█▀▀░░░▀▀█░█▀▀░█▀▄░▀▄▀░█▀▀░█▀▄░▀▀█
+# ░▀░▀░▀▀▀░▀░░░░░▀▀▀░▀▀▀░▀░▀░░▀░░▀▀▀░▀░▀░▀▀▀
+
+# ArXiv Search MCP Server — ConfigMap + Deployment
+arxiv_search_code = str(read_file("mcp/arxiv_search_server.py"))
+k8s_yaml(encode_yaml({
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+        "name": "mcp-arxiv-search-code",
+        "namespace": "default",
+    },
+    "data": {
+        "arxiv_search_server.py": arxiv_search_code,
+    },
+}))
+
+k8s_resource(
+    new_name="mcp-arxiv-search-code",
+    objects=["mcp-arxiv-search-code:configmap"],
+    labels=["mcp"],
+)
+
+k8s_yaml("manifests/mcp-arxiv-search.yaml")
+k8s_resource(
+    "mcp-arxiv-search",
+    resource_deps=["mcp-arxiv-search-code", "openwebui-secret"],
+    labels=["mcp"],
+)
+
+# Paper-to-Text MCP Server — ConfigMap + Deployment
+paper_to_text_code = str(read_file("mcp/paper_to_text_server.py"))
+k8s_yaml(encode_yaml({
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+        "name": "mcp-paper-to-text-code",
+        "namespace": "default",
+    },
+    "data": {
+        "paper_to_text_server.py": paper_to_text_code,
+    },
+}))
+
+k8s_resource(
+    new_name="mcp-paper-to-text-code",
+    objects=["mcp-paper-to-text-code:configmap"],
+    labels=["mcp"],
+)
+
+k8s_yaml("manifests/mcp-paper-to-text.yaml")
+k8s_resource(
+    "mcp-paper-to-text",
+    resource_deps=["mcp-paper-to-text-code", "openwebui-secret", "nemotron-parse-service"],
+    labels=["mcp"],
 )
 
 # ░█▀▄░█▀█░█░█░░░█▄█░█▀▀░▀█▀░█▀▄░▀█▀░█▀▀░█▀▀
@@ -447,6 +538,8 @@ local_resource(
         "nemotron-parse-service",
         "llm-gateway",
         "ray-grafana-dashboards",
+        "mcp-arxiv-search",
+        "mcp-paper-to-text",
     ],
     labels=["status"],
 )

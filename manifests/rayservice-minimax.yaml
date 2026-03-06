@@ -23,7 +23,7 @@ spec:
       port: 8265
       targetPort: 8265
       protocol: TCP
-  type: ClusterIP
+  type: LoadBalancer
 ---
 apiVersion: ray.io/v1
 kind: RayService
@@ -47,6 +47,9 @@ spec:
             tensor_parallel_size: 4       # All 4 Blackwells on the large node
             trust_remote_code: true       # Required for minimax_m2 architecture
             disable_log_stats: false
+            enable_auto_tool_choice: true
+            tool_call_parser: minimax_m2
+            reasoning_parser: minimax_m2_append_think
           deployment_config:
             autoscaling_config:
               min_replicas: 1
@@ -166,6 +169,8 @@ spec:
               - name: ray-worker
                 image: rayproject/ray-llm:2.54.0-py311-cu128
                 env:
+                  - name: SAFETENSORS_FAST_GPU
+                    value: "1"
                   - name: HUGGING_FACE_HUB_TOKEN
                     valueFrom:
                       secretKeyRef:

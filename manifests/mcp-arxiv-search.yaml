@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ArXiv Search MCP Server — FastMCP + Streamable HTTP
+# Searches arXiv for academic papers; tools: search_arxiv, get_paper_info
+# Endpoint: http://mcp-arxiv-search-svc:8000/mcp
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-arxiv-search
+  namespace: default
+  labels:
+    app: mcp-arxiv-search
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-arxiv-search
+  template:
+    metadata:
+      labels:
+        app: mcp-arxiv-search
+    spec:
+      initContainers:
+        - name: install-deps
+          image: python:3.11-slim
+          command: ["pip", "install", "--no-cache-dir", "--target=/deps",
+                    "fastmcp>=3.0.0", "httpx>=0.27.0", "arxiv>=2.1.0",
+                    "uvicorn>=0.30.0"]
+          volumeMounts:
+            - name: deps
+              mountPath: /deps
+      containers:
+        - name: server
+          image: python:3.11-slim
+          command: ["python", "/app/arxiv_search_server.py"]
+          env:
+            - name: PYTHONPATH
+              value: "/deps"
+            - name: MCP_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-secret
+                  key: api_key
+            - name: MCP_PORT
+              value: "8000"
+          ports:
+            - containerPort: 8000
+              name: mcp
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: deps
+              mountPath: /deps
+            - name: app-code
+              mountPath: /app
+      volumes:
+        - name: deps
+          emptyDir: {}
+        - name: app-code
+          configMap:
+            name: mcp-arxiv-search-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-arxiv-search-svc
+  namespace: default
+  labels:
+    app: mcp-arxiv-search
+spec:
+  selector:
+    app: mcp-arxiv-search
+  ports:
+    - name: mcp
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+  type: ClusterIP

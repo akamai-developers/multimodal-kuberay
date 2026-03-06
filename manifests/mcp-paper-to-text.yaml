@@ -1,0 +1,102 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Paper-to-Text MCP Server — FastMCP + Streamable HTTP
+# OCR academic papers: PDF → images → Nemotron Parse
+# Tools: read_papers (batch of 5), read_single_paper
+# Endpoint: http://mcp-paper-to-text-svc:8000/mcp
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-paper-to-text
+  namespace: default
+  labels:
+    app: mcp-paper-to-text
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-paper-to-text
+  template:
+    metadata:
+      labels:
+        app: mcp-paper-to-text
+    spec:
+      initContainers:
+        - name: install-deps
+          image: python:3.11-slim
+          command: ["pip", "install", "--no-cache-dir", "--target=/deps",
+                    "fastmcp>=3.0.0", "httpx>=0.27.0", "pypdfium2>=4.30.0",
+                    "openai>=1.40.0", "Pillow>=10.0.0", "uvicorn>=0.30.0"]
+          volumeMounts:
+            - name: deps
+              mountPath: /deps
+      containers:
+        - name: server
+          image: python:3.11-slim
+          command: ["python", "/app/paper_to_text_server.py"]
+          env:
+            - name: PYTHONPATH
+              value: "/deps"
+            - name: MCP_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-secret
+                  key: api_key
+            - name: MCP_PORT
+              value: "8000"
+            - name: NEMOTRON_PARSE_API_URL
+              value: "http://nemotron-parse-svc.default.svc.cluster.local:8000/v1"
+            - name: PAGE_BATCH_SIZE
+              value: "5"
+            - name: MAX_PAGES_PER_PAPER
+              value: "30"
+          ports:
+            - containerPort: 8000
+              name: mcp
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              memory: 2Gi   # PyPDFium + PIL image rendering is memory-hungry
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 45
+            periodSeconds: 30
+          volumeMounts:
+            - name: deps
+              mountPath: /deps
+            - name: app-code
+              mountPath: /app
+      volumes:
+        - name: deps
+          emptyDir: {}
+        - name: app-code
+          configMap:
+            name: mcp-paper-to-text-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-paper-to-text-svc
+  namespace: default
+  labels:
+    app: mcp-paper-to-text
+spec:
+  selector:
+    app: mcp-paper-to-text
+  ports:
+    - name: mcp
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+  type: ClusterIP
