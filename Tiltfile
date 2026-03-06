@@ -22,7 +22,13 @@ load("ext://secret", "secret_from_dict")
 # Set a longer upsert timeout to avoid apply timeouts during heavy operations
 update_settings(k8s_upsert_timeout_secs=900)
 
-allow_k8s_contexts('lke573757-ctx')
+# Detect and allow the LKE context (must come before any local() calls)
+if k8s_context().startswith("lke"):
+    allow_k8s_contexts(k8s_context())
+else:
+    print("WARNING: Not running on LKE context. Current context: %s" % k8s_context())
+    print("Make sure you're connected to the correct cluster!")
+
 # Capture start time for total deployment timing
 _tilt_start_ts = str(local("date +%s")).strip()
 
@@ -32,7 +38,7 @@ _tilt_start_ts = str(local("date +%s")).strip()
 # Load environment variables from .env file
 huggingface_token = os.getenv("HUGGINGFACE_TOKEN", "")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
-s3_endpoint_hostname = os.getenv("S3_ENDPOINT_HOSTNAME", "")
+obj_endpoint_hostname = os.getenv("OBJ_ENDPOINT_HOSTNAME", "")
 obj_access_key = os.getenv("OBJ_ACCESS_KEY", "")
 obj_secret_key = os.getenv("OBJ_SECRET_KEY", "")
 obj_region = os.getenv("OBJ_REGION", "")
@@ -44,26 +50,21 @@ kuberay_operator_version = os.getenv("KUBERAY_OPERATOR_VERSION", "1.5.1")
 envoy_gateway_version = os.getenv("ENVOY_GATEWAY_VERSION", "v1.7.0")
 kueue_version = os.getenv("KUEUE_VERSION", "0.16.1")
 
-# Validate required environment variables
-if not huggingface_token:
-    fail("HUGGINGFACE_TOKEN environment variable is required.")
-if not openai_api_key:
-    fail("OPENAI_API_KEY environment variable is required.")
-if not s3_endpoint_hostname:
-    fail("S3_ENDPOINT_HOSTNAME environment variable is required.")
-if not obj_access_key:
-    fail("OBJ_ACCESS_KEY environment variable is required.")
-if not obj_secret_key:
-    fail("OBJ_SECRET_KEY environment variable is required.")
-if not obj_region:
-    fail("OBJ_REGION environment variable is required.")
-
-# Detect and allow the LKE context
-if k8s_context().startswith("lke"):
-    allow_k8s_contexts(k8s_context())
-else:
-    print("WARNING: Not running on LKE context. Current context: %s" % k8s_context())
-    print("Make sure you're connected to the correct cluster!")
+# Validate required environment variables (skip during teardown)
+_required_vars = {
+    "HUGGINGFACE_TOKEN": huggingface_token,
+    "OPENAI_API_KEY": openai_api_key,
+    "OBJ_ENDPOINT_HOSTNAME": obj_endpoint_hostname,
+    "OBJ_ACCESS_KEY": obj_access_key,
+    "OBJ_SECRET_KEY": obj_secret_key,
+    "OBJ_REGION": obj_region,
+}
+_missing = [k for k, v in _required_vars.items() if not v]
+if _missing:
+    if config.tilt_subcommand == "down":
+        print("WARNING: Missing env vars (ignored during teardown): %s" % ", ".join(_missing))
+    else:
+        fail("Missing required environment variables: %s" % ", ".join(_missing))
 
 # ░█▀█░█░█░▀█▀░█▀▄░▀█▀░█▀█░░░█▀▀░█▀█░█░█░░░█▀█░█▀█░█▀▀░█▀▄░█▀█░▀█▀░█▀█░█▀▄
 # ░█░█░▀▄▀░░█░░█░█░░█░░█▀█░░░█░█░█▀▀░█░█░░░█░█░█▀▀░█▀▀░█▀▄░█▀█░░█░░█░█░█▀▄
@@ -79,7 +80,7 @@ helm_resource(
     "gpu-operator",
     "gpu-operator-repo/gpu-operator",
     namespace="gpu-operator",
-    resource_deps=["gpu-operator-repo"],
+    resource_deps=["gpu-operator-repo", "kueue"],
     flags=[
         "--create-namespace",
         "--version=%s" % nvidia_gpu_operator_version,
@@ -124,6 +125,7 @@ helm_resource(
     "envoy-gateway",
     "oci://docker.io/envoyproxy/gateway-helm",
     namespace="envoy-gateway-system",
+    resource_deps=["kueue"],
     flags=[
         "--create-namespace",
         "--version=%s" % envoy_gateway_version,
@@ -213,15 +215,16 @@ k8s_resource(
 )
 
 # Object Storage Secret for model caching
+# Key names match standard AWS env vars so manifests can use envFrom directly.
 k8s_yaml(secret_from_dict(
     name="obj-store-secret",
     namespace="default",
     inputs={
-        "access_key": obj_access_key,
-        "secret_key": obj_secret_key,
-        "endpoint_hostname": s3_endpoint_hostname,
-        "region": obj_region,
-        "bucket": model_bucket,
+        "OBJ_ACCESS_KEY": obj_access_key,
+        "OBJ_SECRET_KEY": obj_secret_key,
+        "OBJ_ENDPOINT_HOSTNAME": obj_endpoint_hostname,
+        "OBJ_REGION": obj_region,
+        "MODEL_BUCKET": model_bucket,
     }
 ))
 
@@ -272,8 +275,6 @@ k8s_resource(
 
 # Research Pipeline ConfigMap — auto-updates when any serve/*.py pipeline changes
 research_pipeline_code = str(read_file("serve/research_pipeline.py"))
-agentic_pipeline_code = str(read_file("serve/agentic_research_pipeline.py"))
-toolcall_pipeline_code = str(read_file("serve/toolcall_research_pipeline.py"))
 mcp_pipeline_code = str(read_file("serve/mcp_research_pipeline.py"))
 k8s_yaml(encode_yaml({
     "apiVersion": "v1",
@@ -284,8 +285,6 @@ k8s_yaml(encode_yaml({
     },
     "data": {
         "research_pipeline.py": research_pipeline_code,
-        "agentic_research_pipeline.py": agentic_pipeline_code,
-        "toolcall_research_pipeline.py": toolcall_pipeline_code,
         "mcp_research_pipeline.py": mcp_pipeline_code,
     },
 }))
@@ -294,6 +293,26 @@ k8s_resource(
     new_name="research-pipeline-code",
     objects=["research-pipeline-code:configmap"],
     labels=["openwebui"],
+)
+
+# Model Sync Script ConfigMap — shared s5cmd-based object storage downloader for init containers
+model_sync_script = str(read_file("scripts/model-sync.sh"))
+k8s_yaml(encode_yaml({
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+        "name": "model-sync-scripts",
+        "namespace": "default",
+    },
+    "data": {
+        "model-sync.sh": model_sync_script,
+    },
+}))
+
+k8s_resource(
+    new_name="model-sync-scripts",
+    objects=["model-sync-scripts:configmap"],
+    labels=["kuberay"],
 )
 
 # ░█░█░█▀█░█▀▀░░░█▄█░█▀█░█▀▄░█▀▀░█░░░░░█▀▀░█▀█░█▀▀░█░█░█▀▀
@@ -320,7 +339,7 @@ k8s_resource(
         "ray-serve-minimax:rayservice",
         "minimax-llm-svc:service",
     ],
-    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload"],
+    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload", "model-sync-scripts"],
     labels=["kuberay"],
 )
 
@@ -345,7 +364,7 @@ k8s_resource(
         "ray-serve-nemotron-parse:rayservice",
         "nemotron-parse-svc:service",
     ],
-    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload", "gpu-operator"],
+    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload", "model-sync-scripts", "gpu-operator"],
     labels=["kuberay"],
 )
 
@@ -423,6 +442,9 @@ k8s_resource(
 # ░█░█░█░░░█▀▀░░░▀▀█░█▀▀░█▀▄░▀▄▀░█▀▀░█▀▄░▀▀█
 # ░▀░▀░▀▀▀░▀░░░░░▀▀▀░▀▀▀░▀░▀░░▀░░▀▀▀░▀░▀░▀▀▀
 
+# MCP shared code (auth middleware)
+mcp_common_code = str(read_file("mcp/common.py"))
+
 # ArXiv Search MCP Server — ConfigMap + Deployment
 arxiv_search_code = str(read_file("mcp/arxiv_search_server.py"))
 k8s_yaml(encode_yaml({
@@ -434,6 +456,7 @@ k8s_yaml(encode_yaml({
     },
     "data": {
         "arxiv_search_server.py": arxiv_search_code,
+        "common.py": mcp_common_code,
     },
 }))
 
@@ -446,7 +469,7 @@ k8s_resource(
 k8s_yaml("manifests/mcp-arxiv-search.yaml")
 k8s_resource(
     "mcp-arxiv-search",
-    resource_deps=["mcp-arxiv-search-code", "openwebui-secret"],
+    resource_deps=["mcp-arxiv-search-code", "openwebui-secret", "kueue"],
     labels=["mcp"],
 )
 
@@ -461,6 +484,7 @@ k8s_yaml(encode_yaml({
     },
     "data": {
         "paper_to_text_server.py": paper_to_text_code,
+        "common.py": mcp_common_code,
     },
 }))
 
@@ -473,7 +497,7 @@ k8s_resource(
 k8s_yaml("manifests/mcp-paper-to-text.yaml")
 k8s_resource(
     "mcp-paper-to-text",
-    resource_deps=["mcp-paper-to-text-code", "openwebui-secret", "nemotron-parse-service"],
+    resource_deps=["mcp-paper-to-text-code", "openwebui-secret", "nemotron-parse-service", "kueue"],
     labels=["mcp"],
 )
 

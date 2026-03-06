@@ -3,8 +3,10 @@ kind: Kustomization
 
 resources:
   - rayservice-minimax.yaml
-  - nemotron-parse.yaml
+  - rayservice-nemotron-parse.yaml
   - openwebui.yaml
   - gateway.yaml
   - model-upload-job.yaml
   - ray-podmonitor.yaml
+  - mcp-arxiv-search.yaml
+  - mcp-paper-to-text.yaml

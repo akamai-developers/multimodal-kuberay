@@ -771,14 +771,6 @@ async def _run_turn(
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-async def _text_response(minimax, messages) -> str:
-    """Single non-tool-calling text response (buffered)."""
-    text = ""
-    async for delta in _stream_response(minimax, messages):
-        text += delta
-    return text
-
-
 async def _stream_response(minimax, messages, max_tokens=16384):
     """Streaming non-tool-calling text response from the LLM.
 

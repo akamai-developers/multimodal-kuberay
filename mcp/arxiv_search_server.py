@@ -21,7 +21,9 @@ import time
 
 from fastmcp import FastMCP
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, JSONResponse
+from starlette.responses import PlainTextResponse
+
+from common import BearerAuthMiddleware
 
 
 # ── Rate limiter ─────────────────────────────────────────────────────────────
@@ -69,30 +71,6 @@ async def _rate_limited_arxiv_call(fn):
             raise
 
     raise last_exc or RuntimeError("arXiv request failed after retries")
-
-
-# ── Auth middleware ───────────────────────────────────────────────────────────
-
-class _BearerAuthMiddleware:
-    """ASGI middleware that validates Bearer token on all requests except /health."""
-
-    def __init__(self, app, token: str):
-        self.app = app
-        self.token = token
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] == "http":
-            path = scope.get("path", "")
-            if path != "/health":
-                headers = dict(scope.get("headers", []))
-                auth = headers.get(b"authorization", b"").decode()
-                if auth != f"Bearer {self.token}":
-                    response = JSONResponse(
-                        {"error": "Unauthorized"}, status_code=401,
-                    )
-                    await response(scope, receive, send)
-                    return
-        await self.app(scope, receive, send)
 
 
 # ── MCP Server ───────────────────────────────────────────────────────────────
@@ -214,7 +192,7 @@ if __name__ == "__main__":
     app = mcp.http_app()
 
     if token:
-        app = _BearerAuthMiddleware(app, token)
+        app = BearerAuthMiddleware(app, token)
         print("[arxiv-search] Bearer token auth enabled")
     else:
         print("[arxiv-search] WARNING: No MCP_AUTH_TOKEN — running without auth")

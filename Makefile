@@ -4,11 +4,14 @@
 # This Makefile provides convenient targets for managing the infrastructure
 # and deployment lifecycle.
 
-.PHONY: help init plan apply destroy kubeconfig up ci down status test test-research clean all
+.PHONY: help init plan apply destroy kubeconfig up ci down status test test-research clean all _check-env
 
 # Load .env file if it exists, and export all variables to subprocesses (Tilt)
 -include .env
 export
+
+# Default KUBECONFIG path if not set
+KUBECONFIG ?= $(shell pwd)/kubeconfig
 
 # Default target - show help
 help:
@@ -75,27 +78,17 @@ kubeconfig:
 # Tilt Deployment Targets
 # ============================================================================
 
-up: kubeconfig
+_check-env:
 	@if [ ! -f .env ]; then \
 		echo "WARNING: .env file not found. Copy .env.example to .env and fill in required values."; \
 		echo "Continuing anyway..."; \
 	fi
-	@if [ -z "$$KUBECONFIG" ]; then \
-		echo "Setting KUBECONFIG to ./kubeconfig"; \
-		export KUBECONFIG=$$(pwd)/kubeconfig; \
-	fi
-	KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} tilt up
 
-ci: kubeconfig
-	@if [ ! -f .env ]; then \
-		echo "WARNING: .env file not found. Copy .env.example to .env and fill in required values."; \
-		echo "Continuing anyway..."; \
-	fi
-	@if [ -z "$$KUBECONFIG" ]; then \
-		echo "Setting KUBECONFIG to ./kubeconfig"; \
-		export KUBECONFIG=$$(pwd)/kubeconfig; \
-	fi
-	KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} tilt ci
+up: kubeconfig _check-env
+	tilt up
+
+ci: kubeconfig _check-env
+	tilt ci
 
 down:
 	@if [ -z "$$KUBECONFIG" ]; then \
@@ -123,6 +116,15 @@ down:
 	KUBECONFIG=$$KC kubectl get crd -o name 2>/dev/null \
 		| grep -E 'nvidia\.com|monitoring\.coreos\.com|envoyproxy\.io|gateway\.networking\.k8s\.io|kueue\.x-k8s\.io|ray\.io' \
 		| xargs -r KUBECONFIG=$$KC kubectl delete --ignore-not-found 2>/dev/null || true; \
+	echo "Removing stale webhook configurations..."; \
+	for wh in $$(KUBECONFIG=$$KC kubectl get mutatingwebhookconfigurations -o name 2>/dev/null \
+		| grep -E 'kueue|envoy|gpu-operator|nvidia'); do \
+		KUBECONFIG=$$KC kubectl delete $$wh --ignore-not-found 2>/dev/null || true; \
+	done; \
+	for wh in $$(KUBECONFIG=$$KC kubectl get validatingwebhookconfigurations -o name 2>/dev/null \
+		| grep -E 'kueue|envoy|gpu-operator|nvidia'); do \
+		KUBECONFIG=$$KC kubectl delete $$wh --ignore-not-found 2>/dev/null || true; \
+	done; \
 	echo "Waiting for namespace deletion..."; \
 	for ns in gpu-operator envoy-gateway-system kueue-system; do \
 		KUBECONFIG=$$KC kubectl wait --for=delete ns/$$ns --timeout=60s 2>/dev/null || true; \

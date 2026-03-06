@@ -33,16 +33,17 @@ spec:
               tar xzf /tmp/s5cmd.tar.gz -C /usr/local/bin && rm /tmp/s5cmd.tar.gz
               s5cmd version
 
+              # s5cmd and boto3 require AWS env vars for auth
               export AWS_ACCESS_KEY_ID="${OBJ_ACCESS_KEY}"
               export AWS_SECRET_ACCESS_KEY="${OBJ_SECRET_KEY}"
               export AWS_REGION="${OBJ_REGION}"
-              S3_ENDPOINT="https://${S3_ENDPOINT_HOSTNAME}"
+              OBJ_ENDPOINT="https://${OBJ_ENDPOINT_HOSTNAME}"
 
-              echo "Ensuring bucket s3://${MODEL_BUCKET} exists..."
+              echo "Ensuring bucket ${MODEL_BUCKET} exists..."
               python3 - <<'PYEOF'
               import os, boto3, botocore
               s3 = boto3.client("s3",
-                  endpoint_url="https://" + os.environ["S3_ENDPOINT_HOSTNAME"],
+                  endpoint_url="https://" + os.environ["OBJ_ENDPOINT_HOSTNAME"],
                   aws_access_key_id=os.environ["OBJ_ACCESS_KEY"],
                   aws_secret_access_key=os.environ["OBJ_SECRET_KEY"],
                   region_name=os.environ["OBJ_REGION"],
@@ -51,11 +52,11 @@ spec:
               bucket = os.environ["MODEL_BUCKET"]
               try:
                   s3.head_bucket(Bucket=bucket)
-                  print(f"Bucket s3://{bucket} exists.")
+                  print(f"Bucket {bucket} exists.")
               except botocore.exceptions.ClientError as e:
                   code = int(e.response["Error"].get("Code", 0))
                   if code == 404:
-                      print(f"Creating bucket s3://{bucket}...")
+                      print(f"Creating bucket {bucket}...")
                       # Linode Object Storage ignores LocationConstraint — region
                       # is determined by the endpoint URL, so create without it.
                       try:
@@ -65,7 +66,7 @@ spec:
                               pass
                           else:
                               raise
-                      print(f"Bucket s3://{bucket} created.")
+                      print(f"Bucket {bucket} created.")
                   else:
                       raise
               PYEOF
@@ -74,7 +75,7 @@ spec:
                 local hf_repo="$1"
                 local s3_prefix="$2"
                 local file_count
-                file_count=$(s5cmd --endpoint-url "$S3_ENDPOINT" \
+                file_count=$(s5cmd --endpoint-url "$OBJ_ENDPOINT" \
                   ls "s3://${MODEL_BUCKET}/${s3_prefix}/*" 2>/dev/null | wc -l) || file_count=0
                 if [ "$file_count" -gt 5 ]; then
                   echo "[$(date -u +%H:%M:%S)] SKIP ${hf_repo} already cached (${file_count} files)"
@@ -84,11 +85,11 @@ spec:
                 echo "[$(date -u +%H:%M:%S)] DOWNLOADING ${hf_repo} from HuggingFace..."
                 python3 -c "import os,sys;from huggingface_hub import snapshot_download;snapshot_download(sys.argv[1],local_dir=sys.argv[2],token=os.environ.get('HUGGING_FACE_HUB_TOKEN'));print('Downloaded '+sys.argv[1])" "${hf_repo}" "/staging/${s3_prefix}"
                 local dl_end=$(date +%s)
-                echo "[$(date -u +%H:%M:%S)] HF download took $((dl_end - model_start))s. UPLOADING to s3://${MODEL_BUCKET}/${s3_prefix}/..."
-                s5cmd --endpoint-url "$S3_ENDPOINT" sync "/staging/${s3_prefix}/*" "s3://${MODEL_BUCKET}/${s3_prefix}/"
+                echo "[$(date -u +%H:%M:%S)] HF download took $((dl_end - model_start))s. UPLOADING to ${MODEL_BUCKET}/${s3_prefix}..."
+                s5cmd --endpoint-url "$OBJ_ENDPOINT" sync "/staging/${s3_prefix}/*" "s3://${MODEL_BUCKET}/${s3_prefix}/"
                 local upload_end=$(date +%s)
                 rm -rf "/staging/${s3_prefix}"
-                echo "[$(date -u +%H:%M:%S)] DONE ${hf_repo} — HF download: $((dl_end - model_start))s, S3 upload: $((upload_end - dl_end))s, total: $((upload_end - model_start))s"
+                echo "[$(date -u +%H:%M:%S)] DONE ${hf_repo} — download: $((dl_end - model_start))s, upload: $((upload_end - dl_end))s, total: $((upload_end - model_start))s"
               }
 
               echo "=== Caching models ($(date -u +%H:%M:%S)) ==="
@@ -105,31 +106,9 @@ spec:
                 secretKeyRef:
                   name: hf-secret
                   key: hf_token
-            - name: OBJ_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: obj-store-secret
-                  key: access_key
-            - name: OBJ_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: obj-store-secret
-                  key: secret_key
-            - name: S3_ENDPOINT_HOSTNAME
-              valueFrom:
-                secretKeyRef:
-                  name: obj-store-secret
-                  key: endpoint_hostname
-            - name: OBJ_REGION
-              valueFrom:
-                secretKeyRef:
-                  name: obj-store-secret
-                  key: region
-            - name: MODEL_BUCKET
-              valueFrom:
-                secretKeyRef:
-                  name: obj-store-secret
-                  key: bucket
+          envFrom:
+            - secretRef:
+                name: obj-store-secret
           resources:
             requests:
               cpu: 2

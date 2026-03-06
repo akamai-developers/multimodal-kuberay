@@ -176,17 +176,7 @@ spec:
                     set -e
 
                     # ── Model download (background) ──────────────────────
-                    (
-                      echo "[prepare-deps] Installing s5cmd..."
-                      wget -q -O /tmp/s5cmd.tar.gz \
-                        "https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_Linux-64bit.tar.gz"
-                      tar xzf /tmp/s5cmd.tar.gz -C /tmp && rm /tmp/s5cmd.tar.gz
-
-                      echo "[prepare-deps] Downloading Nemotron-Parse-v1.2 from S3..."
-                      /tmp/s5cmd --endpoint-url "https://${S3_ENDPOINT_HOSTNAME}" \
-                        sync "s3://${MODEL_BUCKET}/nvidia/NVIDIA-Nemotron-Parse-v1.2/*" /model-cache/
-                      echo "[prepare-deps] Model download complete."
-                    ) &
+                    /scripts/model-sync.sh "nvidia/NVIDIA-Nemotron-Parse-v1.2" /model-cache &
                     MODEL_PID=$!
 
                     # ── Pre-warm pip cache (background) ──────────────────
@@ -212,37 +202,16 @@ spec:
                       exit 1
                     fi
                     echo "[prepare-deps] All dependencies ready."
-                env:
-                  - name: S3_ENDPOINT_HOSTNAME
-                    valueFrom:
-                      secretKeyRef:
-                        name: obj-store-secret
-                        key: endpoint_hostname
-                  - name: AWS_ACCESS_KEY_ID
-                    valueFrom:
-                      secretKeyRef:
-                        name: obj-store-secret
-                        key: access_key
-                  - name: AWS_SECRET_ACCESS_KEY
-                    valueFrom:
-                      secretKeyRef:
-                        name: obj-store-secret
-                        key: secret_key
-                  - name: AWS_REGION
-                    valueFrom:
-                      secretKeyRef:
-                        name: obj-store-secret
-                        key: region
-                  - name: MODEL_BUCKET
-                    valueFrom:
-                      secretKeyRef:
-                        name: obj-store-secret
-                        key: bucket
+                envFrom:
+                  - secretRef:
+                      name: obj-store-secret
                 volumeMounts:
                   - name: model-cache
                     mountPath: /model-cache
                   - name: pip-cache
                     mountPath: /home/ray/.cache/pip
+                  - name: model-sync
+                    mountPath: /scripts
 
             containers:
               - name: ray-worker
@@ -279,3 +248,7 @@ spec:
                 emptyDir:
                   medium: Memory
                   sizeLimit: 4Gi
+              - name: model-sync
+                configMap:
+                  name: model-sync-scripts
+                  defaultMode: 0755
