@@ -75,6 +75,9 @@ upload_model() {
   echo "[$(date -u +%H:%M:%S)] DOWNLOADING ${hf_repo} from HuggingFace..."
   python3 -c "import os,sys;from huggingface_hub import snapshot_download;snapshot_download(sys.argv[1],local_dir=sys.argv[2],token=os.environ.get('HUGGING_FACE_HUB_TOKEN'));print('Downloaded '+sys.argv[1])" "${hf_repo}" "/staging/${s3_prefix}"
   local dl_end=$(date +%s)
+  # Remove HuggingFace cache metadata — these are small .metadata files
+  # that bloat the bucket and slow down downstream model-sync downloads.
+  rm -rf "/staging/${s3_prefix}/.cache"
   echo "[$(date -u +%H:%M:%S)] HF download took $((dl_end - model_start))s. UPLOADING to ${MODEL_BUCKET}/${s3_prefix}..."
   s5cmd --endpoint-url "$OBJ_ENDPOINT" sync "/staging/${s3_prefix}/*" "s3://${MODEL_BUCKET}/${s3_prefix}/"
   local upload_end=$(date +%s)

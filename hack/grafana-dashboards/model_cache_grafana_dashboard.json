@@ -642,7 +642,7 @@
     },
     {
       "datasource": "${datasource}",
-      "description": "Speed at which model weights were transferred from Akamai Object Storage. Assumes known model sizes: MiniMax M2.5 ~215GB, Nemotron Parse v1.2 ~3.5GB.",
+      "description": "Average network throughput during init containers. Uses actual bytes received (container_network_receive_bytes_total) divided by init duration (main container start − pod start). Includes model download, s5cmd install, and any pip cache warmup.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -658,11 +658,11 @@
               },
               {
                 "color": "yellow",
-                "value": 100
+                "value": 500
               },
               {
                 "color": "green",
-                "value": 500
+                "value": 2000
               }
             ]
           },
@@ -691,19 +691,19 @@
         },
         "textMode": "auto"
       },
-      "title": "Estimated OBJ Transfer Speed",
+      "title": "Init Container Throughput",
       "type": "stat",
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "215000 / (\n  max(container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"})\n)",
-          "legendFormat": "MiniMax (~215 GB)",
+          "expr": "max(container_network_receive_bytes_total{pod=~\"ray-serve-minimax.*worker.*\"})\n/ 1048576\n/ (\n  max(container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"})\n)",
+          "legendFormat": "MiniMax",
           "refId": "A"
         },
         {
           "datasource": "${datasource}",
-          "expr": "3500 / (\n  max(container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n)",
-          "legendFormat": "Nemotron (~3.5 GB)",
+          "expr": "max(container_network_receive_bytes_total{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n/ 1048576\n/ (\n  max(container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n)",
+          "legendFormat": "Nemotron",
           "refId": "B"
         }
       ]

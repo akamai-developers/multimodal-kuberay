@@ -23,9 +23,3 @@ grafana:
           editable: true
           options:
             path: /var/lib/grafana/dashboards/default
-  dashboards:
-    default:
-      zot:
-        gnetId: 12239
-        revision: 2
-        datasource: Prometheus

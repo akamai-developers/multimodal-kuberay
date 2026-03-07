@@ -5,6 +5,12 @@
 # Usage: model-sync.sh <bucket-prefix> <local-path>
 # Env:   OBJ_ENDPOINT_HOSTNAME, OBJ_ACCESS_KEY, OBJ_SECRET_KEY,
 #        OBJ_REGION, MODEL_BUCKET  (all injected via obj-store-secret envFrom)
+#
+# Tuning (optional env vars):
+#   S5CMD_CONCURRENCY  — concurrent parts per file (default: 5)
+#                        Increase for models with few large files (e.g. 64).
+#   S5CMD_PART_SIZE    — part size in MiB (default: 50)
+#                        Increase to reduce round-trips for very large files.
 set -e
 
 BUCKET_PREFIX="${1:?Usage: model-sync.sh <bucket-prefix> <local-path>}"
@@ -29,7 +35,29 @@ else
     S5CMD=/tmp/s5cmd
 fi
 
-echo "Syncing ${MODEL_BUCKET}/${BUCKET_PREFIX} -> ${LOCAL_PATH}"
+# Per-file multipart download tuning
+CONCURRENCY="${S5CMD_CONCURRENCY:-5}"
+PART_SIZE="${S5CMD_PART_SIZE:-50}"
+
+echo "Syncing ${MODEL_BUCKET}/${BUCKET_PREFIX} -> ${LOCAL_PATH} (concurrency=${CONCURRENCY}, part_size=${PART_SIZE}MiB)"
+SYNC_START=$(date +%s)
 "$S5CMD" --endpoint-url "https://${OBJ_ENDPOINT_HOSTNAME}" \
-    sync "s3://${MODEL_BUCKET}/${BUCKET_PREFIX}/*" "${LOCAL_PATH}/"
-echo "Download complete."
+    sync --exclude ".cache/**" \
+    --concurrency "${CONCURRENCY}" --part-size "${PART_SIZE}" \
+    "s3://${MODEL_BUCKET}/${BUCKET_PREFIX}/*" "${LOCAL_PATH}/"
+SYNC_END=$(date +%s)
+ELAPSED=$(( SYNC_END - SYNC_START ))
+
+# Report download metrics
+FILE_COUNT=$(find "${LOCAL_PATH}" -type f 2>/dev/null | wc -l | tr -d ' ')
+# du -sb is GNU-only; use du -sk (POSIX) and convert KB -> bytes
+TOTAL_KB=$(du -sk "${LOCAL_PATH}" 2>/dev/null | awk '{print $1}')
+TOTAL_BYTES=$(( ${TOTAL_KB:-0} * 1024 ))
+TOTAL_GB=$(awk "BEGIN {printf \"%.2f\", ${TOTAL_BYTES} / 1073741824}")
+if [ "$ELAPSED" -gt 0 ]; then
+  SPEED_GBPS=$(awk "BEGIN {printf \"%.2f\", ${TOTAL_BYTES} / 1073741824 / ${ELAPSED}}")
+else
+  SPEED_GBPS="N/A"
+fi
+
+echo "Download complete — ${FILE_COUNT} files, ${TOTAL_GB} GB in ${ELAPSED}s (${SPEED_GBPS} GB/s)"

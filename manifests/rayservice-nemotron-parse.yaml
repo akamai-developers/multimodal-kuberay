@@ -174,6 +174,15 @@ spec:
                 envFrom:
                   - secretRef:
                       name: obj-store-secret
+                env:
+                  # Nemotron has a single ~3.5 GB safetensors file.
+                  # Default concurrency (5 parts × 50 MiB) bottlenecks on
+                  # one TCP stream. 64 concurrent 64 MiB parts saturate
+                  # the network link for large single-file downloads.
+                  - name: S5CMD_CONCURRENCY
+                    value: "64"
+                  - name: S5CMD_PART_SIZE
+                    value: "64"
                 volumeMounts:
                   - name: model-cache
                     mountPath: /model-cache

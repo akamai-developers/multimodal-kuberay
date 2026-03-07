@@ -557,14 +557,14 @@ k8s_resource(
     labels=["monitoring"],
 )
 
-# Ray Grafana Dashboards — auto-provisioned via Grafana sidecar (7 dashboards)
-ray_dashboard_cms = []
+# Grafana Dashboards — auto-provisioned via Grafana sidecar (Ray + DCGM)
+grafana_dashboard_cms = []
 for dashboard_path in listdir("hack/grafana-dashboards"):
     if not dashboard_path.endswith(".json"):
         continue
     # listdir returns full paths; extract just the filename
     dashboard_file = dashboard_path.split("/")[-1]
-    cm_name = "ray-grafana-" + dashboard_file.replace("_grafana_dashboard.json", "").replace("_", "-")
+    cm_name = "grafana-" + dashboard_file.replace("_grafana_dashboard.json", "").replace("_", "-")
     dashboard_json = str(read_file(dashboard_path))
     k8s_yaml(encode_yaml({
         "apiVersion": "v1",
@@ -580,11 +580,11 @@ for dashboard_path in listdir("hack/grafana-dashboards"):
             dashboard_file: dashboard_json,
         },
     }))
-    ray_dashboard_cms.append(cm_name + ":configmap")
+    grafana_dashboard_cms.append(cm_name + ":configmap")
 
 k8s_resource(
-    new_name="ray-grafana-dashboards",
-    objects=ray_dashboard_cms,
+    new_name="grafana-dashboards",
+    objects=grafana_dashboard_cms,
     resource_deps=["kube-prometheus-stack"],
     labels=["monitoring"],
 )
@@ -604,7 +604,7 @@ local_resource(
         "minimax-service",
         "nemotron-parse-service",
         "llm-gateway",
-        "ray-grafana-dashboards",
+        "grafana-dashboards",
         "mcp-arxiv-search",
         "mcp-paper-to-text",
     ],
