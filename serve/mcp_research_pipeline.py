@@ -17,7 +17,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import queue
 import re
+import threading
 import time
 from typing import AsyncGenerator, Iterator, Optional
 
@@ -218,6 +220,8 @@ Write in Markdown with these sections:
 - Be precise, be thorough, highlight disagreements across papers.
 - Call `read_papers` ONCE with ALL papers in a single batch.
 - Do NOT use read_single_paper — always batch with read_papers.
+- The returned text may be condensed per paper — work with what you receive.
+  Do NOT re-read papers individually if the text was condensed.
 - After reading, write the report immediately — no more tool calls.
 """
 
@@ -249,6 +253,8 @@ class Pipeline:
         MAX_SEARCH_TURNS: int = 6       # Phase 1 cap (2-3 queries)
         MAX_READ_TURNS: int = 3         # Phase 2 cap
         MCP_TIMEOUT: float = 900.0      # HTTP timeout for MCP calls
+        OCR_RESULT_MAX_CHARS: int = 120000  # Max chars for OCR tool results (~30K tokens)
+        SEARCH_RESULT_MAX_CHARS: int = 12000  # Max chars for search tool results
 
     def __init__(self) -> None:
         self.name = "Deep Research (MCP)"
@@ -292,16 +298,33 @@ class Pipeline:
             yield "Error: no user message found."
             return
 
-        loop = asyncio.new_event_loop()
-        gen = self._agent_loop(topic)
-        try:
-            while True:
-                chunk = loop.run_until_complete(gen.__anext__())
-                yield chunk
-        except StopAsyncIteration:
-            pass
-        finally:
-            loop.close()
+        # Queue-based async bridge: the event loop runs continuously in a
+        # background thread so incoming LLM/MCP data is processed in
+        # real-time instead of being paused between yields.
+        q: queue.Queue[str | None] = queue.Queue()
+
+        def _run() -> None:
+            async def _produce() -> None:
+                try:
+                    async for chunk in self._agent_loop(topic):
+                        q.put(chunk)
+                except Exception as exc:
+                    q.put(f"\n\n> ⚠ Pipeline error: {exc}\n")
+                finally:
+                    q.put(None)  # sentinel
+
+            asyncio.run(_produce())
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            yield item
+
+        thread.join()
 
     # ── Core two-phase agentic loop ──────────────────────────────────────
 
@@ -373,6 +396,7 @@ class Pipeline:
                     minimax, p1_msgs, arxiv_tools, arxiv_router,
                     http, turn, "Phase 1",
                     max_tokens=4096,  # Fast: just tool calls + selection
+                    valves=v,
                 ):
                     if chunk.text:
                         yield chunk.text
@@ -457,6 +481,7 @@ class Pipeline:
                 async for chunk in _run_turn(
                     minimax, p2_msgs, paper_tools, paper_router,
                     http, turn, "Phase 2",
+                    valves=v,
                 ):
                     if chunk.text:
                         yield chunk.text
@@ -525,6 +550,7 @@ class _TurnChunk:
 async def _run_turn(
     minimax, messages, tools, tool_router, http, turn, phase_label,
     max_tokens: int = 16384,
+    valves=None,
 ) -> AsyncGenerator[_TurnChunk, None]:
     """Execute one agentic turn.  Yields UI text chunks and a final result."""
 
@@ -652,7 +678,7 @@ async def _run_turn(
                 call_start = time.time()
                 while True:
                     done, _ = await asyncio.wait(
-                        {task}, timeout=15.0,
+                        {task}, timeout=5.0,
                     )
                     if done:
                         break
@@ -669,11 +695,13 @@ async def _run_turn(
                 yield _TurnChunk(text=f"  → _{summary}_\n\n")
 
                 # Feed result back as a user message (no tool_call_id)
+                limit = _tool_result_limit(fn_name, valves)
+                truncated = _truncate_tool_result(fn_name, result_str, limit)
                 messages.append({
                     "role": "user",
                     "content": (
                         f"Tool result for {fn_name}:\n\n"
-                        f"{_truncate(result_str, 12000)}\n\n"
+                        f"{truncated}\n\n"
                         "Continue with your task. Use the function calling "
                         "interface for tool calls — do NOT output XML."
                     ),
@@ -743,7 +771,7 @@ async def _run_turn(
             call_start = time.time()
             while True:
                 done, _ = await asyncio.wait(
-                    {task}, timeout=15.0,
+                    {task}, timeout=5.0,
                 )
                 if done:
                     break
@@ -759,10 +787,11 @@ async def _run_turn(
         summary = _summarize_result(fn_name, result_str)
         yield _TurnChunk(text=f"  → _{summary}_\n\n")
 
+        limit = _tool_result_limit(fn_name, valves)
         messages.append({
             "role": "tool",
             "tool_call_id": tc["id"],
-            "content": _truncate(result_str, 12000),
+            "content": _truncate_tool_result(fn_name, result_str, limit),
         })
 
     yield _TurnChunk(text="---\n\n")
@@ -941,3 +970,41 @@ def _truncate(text: str, max_chars: int) -> str:
         text[:max_chars]
         + f"\n\n[...truncated, {len(text) - max_chars} chars omitted]"
     )
+
+
+def _tool_result_limit(fn_name: str, valves) -> int:
+    """Return the appropriate char limit based on tool type."""
+    if fn_name in ("read_papers", "read_single_paper"):
+        return getattr(valves, "OCR_RESULT_MAX_CHARS", 120000)
+    return getattr(valves, "SEARCH_RESULT_MAX_CHARS", 12000)
+
+
+def _truncate_tool_result(fn_name: str, text: str, max_chars: int) -> str:
+    """Smart truncation that distributes budget across papers for OCR results."""
+    if len(text) <= max_chars:
+        return text
+    if fn_name != "read_papers":
+        return _truncate(text, max_chars)
+
+    # For read_papers: split by paper separator and give each paper
+    # an equal share of the budget so ALL papers are represented.
+    separator = "\n\n---\n\n"
+    papers = text.split(separator)
+    if len(papers) <= 1:
+        return _truncate(text, max_chars)
+
+    # Reserve space for separators and per-paper truncation notices
+    overhead = len(separator) * (len(papers) - 1) + len(papers) * 80
+    per_paper = max((max_chars - overhead) // len(papers), 500)
+
+    truncated_papers = []
+    for paper in papers:
+        if len(paper) <= per_paper:
+            truncated_papers.append(paper)
+        else:
+            truncated_papers.append(
+                paper[:per_paper]
+                + f"\n[...paper truncated, {len(paper) - per_paper} chars omitted]"
+            )
+
+    return separator.join(truncated_papers)
