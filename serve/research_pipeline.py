@@ -1,5 +1,5 @@
 """
-Deep Research Agent Pipeline — OpenWebUI
+Deep Research Pipeline — OpenWebUI
 =========================================
 requirements: arxiv>=2.1.3, pypdfium2>=4.30.0, openai>=1.40.0, httpx>=0.27.0, Pillow>=10.0.0
 
@@ -49,7 +49,7 @@ class Pipeline:
         ARXIV_POOL: int = 30         # arXiv results to consider before picking top N
 
     def __init__(self) -> None:
-        self.name = "Deep Research Agent"
+        self.name = "Deep Research"
         # NOTE: Do NOT set self.type = "pipe" — the pipelines server's
         # get_all_pipelines() only handles "manifold" and "filter" types;
         # "pipe" falls through without being registered.  Omitting the
@@ -58,7 +58,7 @@ class Pipeline:
         self.valves = self.Valves()
 
     async def on_startup(self) -> None:
-        print("[research_pipeline] Loaded — Deep Research Agent ready.")
+        print("[research_pipeline] Loaded — Deep Research ready.")
 
     async def on_shutdown(self) -> None:
         pass

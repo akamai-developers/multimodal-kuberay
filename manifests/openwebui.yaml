@@ -35,48 +35,6 @@ spec:
       labels:
         app: openwebui
     spec:
-      # ── Seed "Stream Chat Response = ON" into the config DB ───────────
-      # OpenWebUI's PersistentConfig reads models.default_params from the
-      # SQLite config table at startup.  Setting stream_response = true
-      # ensures every model (including pipelines) streams by default,
-      # so the UI updates in real-time without users toggling anything.
-      initContainers:
-        - name: seed-config
-          image: python:3.12-slim
-          command:
-            - python3
-            - -c
-            - |
-              import sqlite3, json, pathlib
-              db_path = "/app/backend/data/webui.db"
-              if not pathlib.Path(db_path).exists():
-                  print("DB does not exist yet — skipping (first boot)")
-                  raise SystemExit(0)
-              conn = sqlite3.connect(db_path)
-              c = conn.cursor()
-              c.execute("SELECT data FROM config ORDER BY id DESC LIMIT 1")
-              row = c.fetchone()
-              if row:
-                  data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
-                  models = data.setdefault("models", {})
-                  dp = models.setdefault("default_params", {})
-                  if dp.get("stream_response") is not True:
-                      dp["stream_response"] = True
-                      c.execute(
-                          "UPDATE config SET data = ? "
-                          "WHERE id = (SELECT id FROM config ORDER BY id DESC LIMIT 1)",
-                          (json.dumps(data),),
-                      )
-                      conn.commit()
-                      print("Set models.default_params.stream_response = true")
-                  else:
-                      print("stream_response already true — no-op")
-              else:
-                  print("No config row yet — first boot, OpenWebUI will create one")
-              conn.close()
-          volumeMounts:
-            - name: data
-              mountPath: /app/backend/data
       containers:
         - name: openwebui
           image: ghcr.io/open-webui/open-webui:main
@@ -93,6 +51,21 @@ spec:
               value: "test_token;test_token"
             - name: DEFAULT_MODELS
               value: "minimax-m2.5"
+            # ── Auto-create admin account on first boot ───────────────────
+            # Skips the registration page entirely — credentials injected
+            # from the openwebui-secret (sourced from .env via Tiltfile).
+            - name: WEBUI_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-secret
+                  key: admin_email
+            - name: WEBUI_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-secret
+                  key: admin_password
+            - name: WEBUI_ADMIN_NAME
+              value: "Admin"
             # ── General settings ──────────────────────────────────────────
             - name: WEBUI_AUTH
               value: "True"
@@ -102,6 +75,15 @@ spec:
               value: "1200"
             - name: WEBUI_NAME
               value: "Deep Research Agent"
+          # ── Seed streaming config ─────────────────────────────────────
+          # OpenWebUI defaults to stream=false for pipeline models.
+          # The postStart hook runs a retry loop that patches both global
+          # config and user rows.  nohup + fd redirect ensures sh exits
+          # immediately so the hook doesn't block container readiness.
+          lifecycle:
+            postStart:
+              exec:
+                command: [sh, -c, "nohup /scripts/seed-streaming-config.sh >/dev/null 2>&1 &"]
           resources:
             requests:
               cpu: 500m
@@ -117,6 +99,9 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /app/backend/data
+            - name: seed-config-script
+              mountPath: /scripts
+              readOnly: true
             - name: custom-css
               mountPath: /app/backend/open_webui/static/custom.css
               subPath: custom.css
@@ -137,6 +122,10 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: openwebui-data
+        - name: seed-config-script
+          configMap:
+            name: seed-config-scripts
+            defaultMode: 0755
         - name: custom-css
           configMap:
             name: openwebui-custom-css

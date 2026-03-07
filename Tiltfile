@@ -38,6 +38,8 @@ _tilt_start_ts = str(local("date +%s")).strip()
 # Load environment variables from .env file
 huggingface_token = os.getenv("HUGGINGFACE_TOKEN", "")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
+webui_admin_email = os.getenv("WEBUI_ADMIN_EMAIL", "admin@demo.local")
+webui_admin_password = os.getenv("WEBUI_ADMIN_PASSWORD", "demo1234")
 obj_endpoint_hostname = os.getenv("OBJ_ENDPOINT_HOSTNAME", "")
 obj_access_key = os.getenv("OBJ_ACCESS_KEY", "")
 obj_secret_key = os.getenv("OBJ_SECRET_KEY", "")
@@ -295,8 +297,11 @@ k8s_resource(
     labels=["openwebui"],
 )
 
-# Model Sync Script ConfigMap — shared s5cmd-based object storage downloader for init containers
+# Model Sync Script ConfigMap — shared scripts for init containers
+# Includes the s5cmd-based object storage downloader and the Nemotron
+# prepare-deps wrapper (parallel model download + pip cache warmup).
 model_sync_script = str(read_file("scripts/model-sync.sh"))
+prepare_deps_nemotron_script = str(read_file("scripts/prepare-deps-nemotron.sh"))
 k8s_yaml(encode_yaml({
     "apiVersion": "v1",
     "kind": "ConfigMap",
@@ -306,6 +311,7 @@ k8s_yaml(encode_yaml({
     },
     "data": {
         "model-sync.sh": model_sync_script,
+        "prepare-deps-nemotron.sh": prepare_deps_nemotron_script,
     },
 }))
 
@@ -319,11 +325,31 @@ k8s_resource(
 # ░█▀▄░█▀█░▀▀█░░░█░█░█░█░█░█░█▀▀░█░░░░░█░░░█▀█░█░░░█▀█░█▀▀
 # ░▀░▀░▀▀▀░▀▀▀░░░▀░▀░▀▀▀░▀▀░░▀▀▀░▀▀▀░░░▀▀▀░▀░▀░▀▀▀░▀░▀░▀▀▀
 
+# Model Upload Script ConfigMap — HuggingFace → Object Storage caching script
+model_upload_script = str(read_file("scripts/model-upload.sh"))
+k8s_yaml(encode_yaml({
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+        "name": "model-upload-scripts",
+        "namespace": "default",
+    },
+    "data": {
+        "model-upload.sh": model_upload_script,
+    },
+}))
+
+k8s_resource(
+    new_name="model-upload-scripts",
+    objects=["model-upload-scripts:configmap"],
+    labels=["kuberay"],
+)
+
 # Model Upload Job — caches MiniMax-M2.5 and Nemotron-Parse-v1.2 in Object Storage
 k8s_yaml("manifests/model-upload-job.yaml")
 k8s_resource(
     "model-upload",
-    resource_deps=["hf-secret", "obj-store-secret", "kueue"],
+    resource_deps=["hf-secret", "obj-store-secret", "model-upload-scripts", "kueue"],
     labels=["kuberay"],
 )
 
@@ -386,6 +412,8 @@ k8s_yaml(secret_from_dict(
     namespace="default",
     inputs={
         "api_key": openai_api_key,
+        "admin_email": webui_admin_email,
+        "admin_password": webui_admin_password,
     }
 ))
 
@@ -420,6 +448,20 @@ _logos_cmd = (
 )
 k8s_yaml(local(_logos_cmd, quiet=True))
 
+# Seed Streaming Config Script — postStart hook for OpenWebUI
+seed_config_script = str(read_file("scripts/seed-streaming-config.sh"))
+k8s_yaml(encode_yaml({
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+        "name": "seed-config-scripts",
+        "namespace": "default",
+    },
+    "data": {
+        "seed-streaming-config.sh": seed_config_script,
+    },
+}))
+
 k8s_yaml("manifests/openwebui.yaml")
 k8s_resource(
     "openwebui",
@@ -427,6 +469,7 @@ k8s_resource(
         "openwebui-data:persistentvolumeclaim:default",
         "openwebui-custom-css:configmap",
         "openwebui-logos:configmap",
+        "seed-config-scripts:configmap",
     ],
     resource_deps=["openwebui-secret", "minimax-service", "kueue"],
     labels=["openwebui"],

@@ -1,5 +1,5 @@
 """
-MCP Client Research Pipeline — OpenWebUI
+Deep Research Agent Pipeline — OpenWebUI
 ==========================================
 requirements: httpx>=0.27.0, openai>=1.40.0
 
@@ -257,11 +257,11 @@ class Pipeline:
         SEARCH_RESULT_MAX_CHARS: int = 12000  # Max chars for search tool results
 
     def __init__(self) -> None:
-        self.name = "Deep Research (MCP)"
+        self.name = "Deep Research Agent"
         self.valves = self.Valves()
 
     async def on_startup(self) -> None:
-        print("[mcp_research_pipeline] Loaded — Deep Research (MCP) ready.")
+        print("[mcp_research_pipeline] Loaded — Deep Research Agent ready.")
 
     async def on_shutdown(self) -> None:
         pass
@@ -271,7 +271,9 @@ class Pipeline:
     async def inlet(self, body: dict, __user__: dict | None = None) -> dict:
         old = body.get("stream", "MISSING")
         body["stream"] = True
-        print(f"[mcp_research_pipeline] inlet: stream {old} -> True")
+        if old is not True:
+            print(f"[mcp_research_pipeline] inlet: stream {old} -> True "
+                  f"(user={(__user__ or {}).get('name', 'unknown')})")
         return body
 
     # ── OpenWebUI entry-point ────────────────────────────────────────────
@@ -279,9 +281,11 @@ class Pipeline:
     def pipe(
         self, body: dict, __user__: Optional[dict] = None, **kwargs,
     ) -> Iterator[str]:
+        stream_flag = body.get("stream", "MISSING")
         print(
             f"[mcp_research_pipeline] pipe called, "
-            f"stream={body.get('stream', 'MISSING')}"
+            f"stream={stream_flag}, "
+            f"user={(__user__ or {}).get('name', 'unknown')}"
         )
         messages = body.get("messages", [])
         topic = next(
@@ -445,7 +449,7 @@ class Pipeline:
                     yield delta
                 elapsed = time.time() - t0
                 yield (
-                    f"\n---\n\n_Research completed in {elapsed:.0f}s_"
+                    f"\n\n---\n\n_Research completed in {elapsed:.0f}s_"
                     f"\n\n---\n\n"
                 )
                 if not synth:
@@ -510,7 +514,7 @@ class Pipeline:
 
             elapsed = time.time() - t0
             yield (
-                f"\n---\n\n_Research completed in {elapsed:.0f}s_"
+                f"\n\n---\n\n_Research completed in {elapsed:.0f}s_"
                 f"\n\n---\n\n"
             )
             if not phase2_streamed:
@@ -882,6 +886,10 @@ def _summarize_result(fn_name: str, result: str) -> str:
     if fn_name == "get_paper_info":
         return f"paper metadata ({chars:,} chars)"
     if fn_name in ("read_papers", "read_single_paper"):
+        page_counts = re.findall(r"\((\d+)\s+pages?\)", result)
+        total_pages = sum(int(p) for p in page_counts) if page_counts else 0
+        if total_pages:
+            return f"OCR complete — {total_pages} pages, ~{chars:,} chars extracted"
         return f"OCR complete — ~{chars:,} chars extracted"
     return f"{chars:,} chars"
 
