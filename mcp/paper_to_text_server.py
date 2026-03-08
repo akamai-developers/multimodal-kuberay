@@ -65,9 +65,9 @@ async def read_papers(papers: list[dict]) -> str:
     """Download, render, and OCR a batch of academic papers with Nemotron Parse.
 
     For each paper, downloads the PDF, renders pages to PNG images, and sends
-    them through Nemotron Parse v1.2 for OCR.  Pages are processed in batches
-    of 5 at a time to avoid overloading the OCR service.  Returns the full
-    extracted markdown text for every paper.
+    them through Nemotron Parse v1.2 for OCR.  All papers and their pages are
+    processed concurrently to maximise throughput — Ray Serve autoscaling
+    detects the burst and spins up additional replicas.
 
     This is an expensive (slow) operation — only call it for papers that are
     highly relevant to the research topic.
@@ -82,22 +82,19 @@ async def read_papers(papers: list[dict]) -> str:
     if not papers:
         return "[Error: No papers provided.]"
 
-    results: list[str] = []
-    for paper in papers:
+    async def _process_or_error(paper: dict) -> str:
         title = paper.get("title", "Unknown")
         pdf_url = paper.get("pdf_url", "")
         max_pages = min(int(paper.get("max_pages", MAX_PAGES_DEFAULT)), 30)
-
         if not pdf_url:
-            results.append(f"## {title}\n\n[Error: No PDF URL provided]\n")
-            continue
-
+            return f"## {title}\n\n[Error: No PDF URL provided]\n"
         try:
             text = await _process_single_paper(title, pdf_url, max_pages)
-            results.append(f"## {title}\n\n{text}\n")
+            return f"## {title}\n\n{text}\n"
         except Exception as exc:
-            results.append(f"## {title}\n\n[Error: {exc}]\n")
+            return f"## {title}\n\n[Error: {exc}]\n"
 
+    results = await asyncio.gather(*[_process_or_error(p) for p in papers])
     return "\n\n---\n\n".join(results)
 
 
@@ -153,7 +150,7 @@ async def _process_single_paper(
     if not page_images:
         return f"[Error: No pages rendered from '{title}']"
 
-    # 3. OCR each page with Nemotron Parse — batched PAGE_BATCH_SIZE pages at a time
+    # 3. OCR all pages concurrently — the burst triggers Ray Serve autoscaling
     parse_client = openai.AsyncOpenAI(
         base_url=NEMOTRON_API_URL,
         api_key="placeholder",
@@ -190,21 +187,16 @@ async def _process_single_paper(
         )
         return ocr_resp.choices[0].message.content or ""
 
-    # Process pages in explicit batches of PAGE_BATCH_SIZE
-    page_texts: list[str] = [""] * len(page_images)
-    for batch_start in range(0, len(page_images), PAGE_BATCH_SIZE):
-        batch_end = min(batch_start + PAGE_BATCH_SIZE, len(page_images))
-        batch = page_images[batch_start:batch_end]
+    # Fire all pages concurrently — no batching, maximum burst
+    tasks = [asyncio.ensure_future(ocr_page(img)) for img in page_images]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        tasks = [asyncio.ensure_future(ocr_page(img)) for img in batch]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for i, r in enumerate(results):
-            idx = batch_start + i
-            if isinstance(r, Exception):
-                page_texts[idx] = f"[OCR failed on page {idx + 1}: {r}]"
-            else:
-                page_texts[idx] = r
+    page_texts: list[str] = []
+    for i, r in enumerate(results):
+        if isinstance(r, Exception):
+            page_texts.append(f"[OCR failed on page {i + 1}: {r}]")
+        else:
+            page_texts.append(r)
 
     full_text = "\n\n---\n\n".join(page_texts)
     return f"Full text of '{title}' ({len(page_images)} pages):\n\n{full_text}"

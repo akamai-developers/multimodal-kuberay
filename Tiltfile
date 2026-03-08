@@ -108,7 +108,7 @@ helm_resource(
     "kuberay-operator",
     "kuberay-operator-repo/kuberay-operator",
     namespace="default",
-    resource_deps=["kuberay-operator-repo", "gpu-operator", "kube-prometheus-stack"],
+    resource_deps=["kuberay-operator-repo", "kube-prometheus-stack"],
     flags=[
         "--version=%s" % kuberay_operator_version,
         "--set=metrics.serviceMonitor.enabled=true",

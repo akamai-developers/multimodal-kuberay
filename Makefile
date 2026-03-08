@@ -33,6 +33,7 @@ help:
 	@echo "  make status      - Show cluster and deployment status"
 	@echo "  make test        - Run deep research agent API smoke test"
 	@echo "  make test-research - Run full research pipeline test"
+	@echo "  make nuke-cache  - Delete all cached models and destroy the bucket"
 	@echo "  make clean       - Clean local terraform and kubeconfig files"
 	@echo ""
 	@echo "Workflows:"
@@ -161,6 +162,9 @@ test-research:
 	fi
 	@echo "Running research pipeline test..."
 	@KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} ./scripts/test-pipeline.sh
+
+nuke-cache:
+	@./scripts/nuke-bucket.sh
 
 clean:
 	@echo "Cleaning up local files..."

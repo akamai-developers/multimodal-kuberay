@@ -78,11 +78,24 @@ upload_model() {
   # Remove HuggingFace cache metadata — these are small .metadata files
   # that bloat the bucket and slow down downstream model-sync downloads.
   rm -rf "/staging/${s3_prefix}/.cache"
-  echo "[$(date -u +%H:%M:%S)] HF download took $((dl_end - model_start))s. UPLOADING to ${MODEL_BUCKET}/${s3_prefix}..."
+  local dl_elapsed=$((dl_end - model_start))
+  local dl_size_kb
+  dl_size_kb=$(du -sk "/staging/${s3_prefix}" | awk '{print $1}')
+  local dl_size_mb=$((dl_size_kb / 1024))
+  local dl_speed_mbs=0
+  if [ "$dl_elapsed" -gt 0 ]; then
+    dl_speed_mbs=$((dl_size_mb / dl_elapsed))
+  fi
+  echo "[$(date -u +%H:%M:%S)] HF download: ${dl_size_mb} MB in ${dl_elapsed}s (${dl_speed_mbs} MB/s). UPLOADING to ${MODEL_BUCKET}/${s3_prefix}..."
   s5cmd --endpoint-url "$OBJ_ENDPOINT" sync "/staging/${s3_prefix}/*" "s3://${MODEL_BUCKET}/${s3_prefix}/"
   local upload_end=$(date +%s)
+  local upload_elapsed=$((upload_end - dl_end))
+  local upload_speed_mbs=0
+  if [ "$upload_elapsed" -gt 0 ]; then
+    upload_speed_mbs=$((dl_size_mb / upload_elapsed))
+  fi
   rm -rf "/staging/${s3_prefix}"
-  echo "[$(date -u +%H:%M:%S)] DONE ${hf_repo} — download: $((dl_end - model_start))s, upload: $((upload_end - dl_end))s, total: $((upload_end - model_start))s"
+  echo "[$(date -u +%H:%M:%S)] DONE ${hf_repo} (${dl_size_mb} MB) — download: ${dl_elapsed}s @ ${dl_speed_mbs} MB/s, upload: ${upload_elapsed}s @ ${upload_speed_mbs} MB/s, total: $((upload_end - model_start))s"
 }
 
 echo "=== Caching models ($(date -u +%H:%M:%S)) ==="

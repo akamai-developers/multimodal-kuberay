@@ -69,12 +69,12 @@ spec:
             autoscaling_config:
               min_replicas: 1
               max_replicas: 4
-              target_ongoing_requests: 1  # Window of 5 concurrent → ceil(5/1) = 5 → capped at 4
+              target_ongoing_requests: 1
               metrics_interval_s: 2
               look_back_period_s: 10
               upscale_delay_s: 3
               downscale_delay_s: 120
-            max_ongoing_requests: 16
+            max_ongoing_requests: 10
             health_check_period_s: 5
             health_check_timeout_s: 120
 
@@ -128,7 +128,7 @@ spec:
             - name: dshm
               emptyDir:
                 medium: Memory
-                sizeLimit: 4Gi
+                sizeLimit: 12Gi
 
     workerGroupSpecs:
       # ── Worker group on 2-GPU nodes ──────────────────────────────────────
@@ -225,7 +225,7 @@ spec:
               - name: dshm
                 emptyDir:
                   medium: Memory
-                  sizeLimit: 4Gi
+                  sizeLimit: 12Gi
               - name: model-sync
                 configMap:
                   name: model-sync-scripts
