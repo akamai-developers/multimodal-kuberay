@@ -129,9 +129,8 @@ class Pipeline:
         yield "\n"
 
         # ── 2. Sliding-window OCR with Nemotron Parse ────────────────────────
-        # Up to OCR_CONCURRENCY requests fly at once.  As the queue builds,
-        # Ray Serve autoscaling spins up new replicas — making scaling
-        # visibly observable during a demo.
+        # Up to OCR_CONCURRENCY requests fly at once, distributed across
+        # the 16 fixed Nemotron Parse replicas via Ray Serve P2C routing.
         OCR_CONCURRENCY = 5
         yield "---\n\n**Step 2/3 — Parsing papers with Nemotron Parse OCR...**\n\n"
 

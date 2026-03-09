@@ -15,7 +15,7 @@ This document provides coding standards, workflows, and commands for AI agents w
 
 **Key Components**:
 - NVIDIA GPU Operator (Blackwell/Ada GPUs)
-- KubeRay Operator + RayService (Qwen3-VL-8B + Nemotron VL 12B vision-language models)
+- KubeRay Operator + RayService (MiniMax M2.5 + Nemotron Parse v1.2)
 - Envoy Gateway (OpenAI-compatible API)
 - Kueue (workload queue management)
 
@@ -126,7 +126,7 @@ kubectl get gateway llm-gateway -ojsonpath="{.status.addresses[0].value}"
 kubectl apply -f manifests/gateway.yaml
 
 # Check RayService status
-kubectl get rayservice ray-serve-llm
+kubectl get rayservice ray-serve-minimax ray-serve-nemotron-parse
 
 # Check Gateway status
 kubectl get gateway llm-gateway
@@ -157,7 +157,7 @@ kubectl logs -l app.kubernetes.io/name=kuberay-operator
 
 **Kubernetes Manifests**: Lowercase, hyphenated
 - Files: `gateway.yaml`, `rayservice.yaml`, `kustomization.yaml`
-- Resources: `llm-gateway`, `ray-serve-llm`, `llm-gateway-auth`
+- Resources: `llm-gateway`, `ray-serve-minimax`, `ray-serve-nemotron-parse`, `llm-gateway-auth`
 
 **Scripts**: Lowercase, hyphenated, executable
 - Files: `test-llm.sh` (chmod +x)
@@ -298,7 +298,8 @@ Examples:
 - `llm-gateway` (Gateway resource)
 - `llm-route` (HTTPRoute)
 - `llm-gateway-auth` (SecurityPolicy)
-- `ray-serve-llm` (RayService)
+- `ray-serve-minimax` (RayService)
+- `ray-serve-nemotron-parse` (RayService)
 - `hf-secret` (HuggingFace token secret)
 
 ### Namespace Strategy
@@ -377,7 +378,7 @@ make all  # Runs: init → apply → up
 
 ### Modifying Security Policies
 1. **Never** hardcode secrets in `manifests/gateway.yaml`
-2. Inject dynamic values via Tiltfile using `read_yaml()`/`encode_yaml_stream()`
+2. Inject dynamic values via Tiltfile using `read_yaml_stream()`/`encode_yaml_stream()`
 3. Ensure raw manifest defaults to secure (deny) behavior
 
 ### Adding Environment Variables

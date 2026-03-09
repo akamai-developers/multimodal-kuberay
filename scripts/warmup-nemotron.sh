@@ -16,16 +16,18 @@
 set -euo pipefail
 
 URL="${1:-http://nemotron-parse-svc.default.svc.cluster.local:8000/v1/chat/completions}"
-# 6× replica count (96) gives ~97% probability that every replica is hit.
 # Ray Serve uses power-of-2-choices (P2C) routing; when all 16 replicas are
-# equally idle at t=0 it degenerates to uniform random, so coverage follows
-# the coupon-collector bound: P(miss ≥1) ≤ 16*(15/16)^k → ~3% at k=96.
+# equally idle at t=0 it degenerates to uniform random.  Coupon-collector
+# bound for guaranteed coverage: P(miss ≥1 of n) ≤ n·(1-1/n)^k.
+# At n=16, k=256: P(miss) ≤ 16·(15/16)^256 ≈ 2×10⁻⁶ → 99.9998% coverage.
 NUM_REPLICAS=16
-NUM_REQUESTS="${2:-$((NUM_REPLICAS * 8))}"
+NUM_REQUESTS="${2:-$((NUM_REPLICAS * NUM_REPLICAS))}"
 
 # 1×1 white PNG — valid image that exercises the full vision pipeline
 TINY_PNG="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
 
+# NOTE: repetition_penalty, top_k, skip_special_tokens are top-level vLLM
+# params — NOT nested under extra_body (that's an OpenAI Python SDK concept).
 BODY=$(cat <<EOF
 {
     "model": "nvidia/NVIDIA-Nemotron-Parse-v1.2",
@@ -44,11 +46,9 @@ BODY=$(cat <<EOF
     }],
     "max_tokens": 1,
     "temperature": 0,
-    "extra_body": {
-        "repetition_penalty": 1.1,
-        "top_k": 1,
-        "skip_special_tokens": false
-    }
+    "repetition_penalty": 1.1,
+    "top_k": 1,
+    "skip_special_tokens": false
 }
 EOF
 )
@@ -109,13 +109,19 @@ echo ""
 echo "Sending ${NUM_REQUESTS} warmup requests simultaneously..."
 START=$(date +%s)
 
-# Fire all requests at once — the phase-2 readiness gate above already
-# confirmed vLLM is accepting inference, so no request will queue-starve.
-# Simultaneous dispatch hits all 16 replicas in a single wave so warmup
-# completes in one forward-pass cycle rather than multiple consecutive spikes.
+# Fire all requests at once.  The phase-2 gate proved vLLM accepts inference,
+# but the very first request on each cold replica triggers CUDA kernel JIT,
+# flash-attention compilation, and image-processor init (~2s).  With 256
+# requests across 16 replicas (max_ongoing_requests=16 each), every slot
+# fills and per-replica queues drain sequentially.  Worst-case tail latency
+# is ~16 × 2s = 32s on the slowest replica, but under memory pressure from
+# concurrent vLLM instances it can stretch to minutes.
+#
+# busybox wget --timeout=N applies N to EACH phase (connect + transfer),
+# so total budget is 2N.  Use 600s (→ 1200s total) to cover worst case.
 for i in $(seq 1 "$NUM_REQUESTS"); do
     (
-        if wget -q -O /dev/null --timeout=300 \
+        if wget -q -O /dev/null --timeout=600 \
             --header="Content-Type: application/json" \
             --post-data="$BODY" \
             "$URL" 2>/dev/null; then

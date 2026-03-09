@@ -247,8 +247,8 @@ spec:
   type: ClusterIP
 ---
 # ─────────────────────────────────────────────────────────────────────────────
-# OpenWebUI HTTPRoute — exposes the web UI via the llm-gateway on /openwebui/
-# Path rewriting strips the /openwebui/ prefix before forwarding to backend.
+# OpenWebUI HTTPRoute — exposes the web UI via the llm-gateway at root (/)
+# OpenWebUI serves natively from root — no path rewriting needed.
 # ─────────────────────────────────────────────────────────────────────────────
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -262,13 +262,7 @@ spec:
   - matches:
     - path:
         type: PathPrefix
-        value: /openwebui/
-    filters:
-    - type: URLRewrite
-      urlRewrite:
-        path:
-          type: ReplacePrefixMatch
-          replacePrefixMatch: /
+        value: /
     backendRefs:
     - name: openwebui-svc
       port: 80

@@ -465,7 +465,7 @@ local_resource(
     links=[link("http://localhost:18265", "Nemotron Parse Ray Dashboard")],
 )
 
-# Nemotron Parse Warmup — sends 48 concurrent dummy requests to pre-heat
+# Nemotron Parse Warmup — sends 256 concurrent dummy requests to pre-heat
 # CUDA kernels, flash-attention JIT, and image processor on all 16 replicas.
 # Runs in parallel with MiniMax weight loading so replicas are hot when the
 # research pipeline first calls OCR.

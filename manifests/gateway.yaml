@@ -32,7 +32,7 @@ spec:
   - matches:
     - path:
         type: PathPrefix
-        value: /
+        value: /v1/
     backendRefs:
     - name: minimax-llm-svc
       port: 8000

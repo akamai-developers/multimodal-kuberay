@@ -76,8 +76,8 @@ mcp = FastMCP(
     instructions=(
         "Convert academic paper PDFs to full text via OCR. "
         "Use read_papers for batch processing or read_single_paper for one paper. "
-        "Provide the direct PDF URL and paper title. Pages are OCR'd in batches "
-        "of 5 to avoid overloading the service. "
+        "Provide the direct PDF URL and paper title. All pages are OCR'd "
+        "concurrently across 16 Nemotron Parse replicas. "
         "This is an EXPENSIVE operation — only use it for highly relevant papers."
     ),
 )
@@ -96,8 +96,8 @@ async def read_papers(papers: list[dict]) -> str:
 
     For each paper, downloads the PDF, renders pages to PNG images, and sends
     them through Nemotron Parse v1.2 for OCR.  All papers and their pages are
-    processed concurrently to maximise throughput — Ray Serve autoscaling
-    detects the burst and spins up additional replicas.
+    processed concurrently to maximise throughput across the 16 fixed Nemotron
+    Parse replicas.
 
     This is an expensive (slow) operation — only call it for papers that are
     highly relevant to the research topic.

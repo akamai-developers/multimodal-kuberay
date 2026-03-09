@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Nemotron Parse Warmup Job
 #
-# Sends 48 concurrent dummy inference requests (3× replica count) to ensure
+# Sends 256 concurrent dummy inference requests (16× replica count) to ensure
 # every replica processes at least one forward pass before real traffic
 # arrives.  This warms up lazy CUDA kernels, flash-attention JIT, and the
 # trust-remote-code image processor.
@@ -32,9 +32,9 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 64Mi
+              memory: 256Mi
             limits:
-              memory: 128Mi
+              memory: 768Mi
           volumeMounts:
             - name: scripts
               mountPath: /scripts

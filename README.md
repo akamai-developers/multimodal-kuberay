@@ -19,7 +19,7 @@ This repository demonstrates how to deploy a production-ready deep research agen
 - 🔬 **Deep research pipeline** — Two-phase MCP agent: search & select papers → OCR & synthesize report
 - 🛠️ **MCP tool servers** — ArXiv search and PDF-to-text OCR via FastMCP (Streamable HTTP transport)
 - 🚀 **OpenAI-compatible API** — Standard `/v1/chat/completions` endpoint via Envoy Gateway
-- 🌐 **Unified Gateway** — Single LoadBalancer for both OpenWebUI (`/openwebui/*`) and API (`/v1/*`) traffic with path-based routing
+- 🌐 **Unified Gateway** — Single LoadBalancer for both OpenWebUI (`/`) and API (`/v1/*`) traffic with path-based routing
 - 🎮 **GPU-accelerated inference** — NVIDIA Blackwell GPUs with MIG partitioning (8× RTX PRO 6000)
 - 🧩 **NVIDIA MIG** — Multi-Instance GPU splits 4 physical GPUs into 16 isolated 24 GB instances
 - 🔧 **Infrastructure-as-Code** — Terraform for cluster provisioning, Tilt for deployment orchestration
@@ -41,7 +41,7 @@ graph TB
     end
 
     subgraph Gateway["Envoy Gateway"]
-        GW["llm-gateway<br/>LoadBalancer :80<br/>/openwebui/* → OpenWebUI (rewrite: /)<br/>/v1/* → MiniMax"]
+        GW["llm-gateway<br/>LoadBalancer :80<br/>/ → OpenWebUI<br/>/v1/* → MiniMax"]
         Auth["SecurityPolicy<br/>API: Bearer Token Auth<br/>OpenWebUI: Allow All"]
         GW --> Auth
     end
@@ -215,13 +215,13 @@ sequenceDiagram
 - **OpenWebUI** — Chat interface with persistent storage and custom branding
 - **Pipelines Server** — Hosts the MCP research pipeline, exposes it as a selectable model in OpenWebUI
 - **MCP Servers** — FastMCP-based tool servers (ArXiv search, Paper-to-Text OCR)
-- **Envoy Gateway** — Unified API gateway routing both OpenWebUI (`/openwebui/*`) and API (`/v1/*`) traffic with path-based routing and flexible authentication (Bearer token for API, allow-all for OpenWebUI's built-in auth)
+- **Envoy Gateway** — Unified API gateway routing both OpenWebUI (`/`) and API (`/v1/*`) traffic with path-based routing and flexible authentication (Bearer token for API, allow-all for OpenWebUI's built-in auth)
 - **Kueue** — Workload queue management for GPU resources
 - **kube-prometheus-stack** — Prometheus + Grafana with Ray-specific dashboards
 - **Tilt** — Live development environment with automatic reloading
 
 **Request Flow** (Deep Research Pipeline):
-1. User submits a research question via OpenWebUI (at `http://<gateway>/openwebui/`) or directly via the Gateway API (at `http://<gateway>/v1/chat/completions`)
+1. User submits a research question via OpenWebUI (at `http://<gateway>/`) or directly via the Gateway API (at `http://<gateway>/v1/chat/completions`)
 2. Gateway routes OpenWebUI traffic to the web interface; API traffic to MiniMax M2.5
 3. OpenWebUI routes to the Pipelines server, which runs the MCP research pipeline
 4. **Phase 1 — Search & Select**: MiniMax M2.5 calls the ArXiv MCP server to search for and select 6-8 relevant papers
@@ -344,7 +344,7 @@ Once deployed, the following services are available:
 - **Tilt Dashboard**: http://localhost:10350  
   Monitor deployment status, view logs, and manage resources
 
-- **OpenWebUI**: Access via Gateway at `http://<GATEWAY_IP>/openwebui/`  
+- **OpenWebUI**: Access via Gateway at `http://<GATEWAY_IP>/`  
   Get the Gateway IP: `kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}'`  
   Chat interface — select "MiniMax M2.5" for direct chat or "Deep Research Agent" for the research pipeline  
   Note: OpenWebUI has its own authentication (username/password), no API key required
@@ -388,7 +388,7 @@ make test-research
 export GATEWAY_IP=$(kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}')
 
 # 2. Open OpenWebUI in your browser
-echo "OpenWebUI: http://${GATEWAY_IP}/openwebui/"
+echo "OpenWebUI: http://${GATEWAY_IP}/"
 # Navigate to the URL and sign up/sign in (OpenWebUI creates an admin account on first run)
 
 # 3. Select a model in the UI:
@@ -438,7 +438,7 @@ curl --no-buffer \
 
 **Authentication Notes**:
 - **API Endpoints** (`/v1/*`): Require Bearer token authentication. Use `Authorization: Bearer ${OPENAI_API_KEY}` header with the value from your `.env` file.
-- **OpenWebUI** (`/openwebui/`): Uses built-in username/password authentication. No API key required. Create an admin account on first access.
+- **OpenWebUI** (`/`): Uses built-in username/password authentication. No API key required. Create an admin account on first access.
 
 ### Monitoring Deployment Status
 
@@ -549,7 +549,7 @@ multimodal-kuberay/
 │   ├── model-sync.sh               # s5cmd-based Object Storage model downloader
 │   ├── model-upload.sh             # HuggingFace → Object Storage caching
 │   ├── prepare-deps-nemotron.sh    # Init container: parallel model download + pip warmup
-│   ├── warmup-nemotron.sh          # Warmup: sends 48 concurrent dummy requests
+│   ├── warmup-nemotron.sh          # Warmup: sends 256 concurrent dummy requests
 │   ├── seed-streaming-config.sh    # OpenWebUI postStart hook
 │   ├── test-llm.sh                 # MiniMax M2.5 API smoke test
 │   └── test-pipeline.sh            # Deep research pipeline test
@@ -617,7 +617,7 @@ kubectl get securitypolicy openwebui-route-auth
 
 # Test Gateway routing
 export GATEWAY_IP=$(kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}')
-curl -I http://${GATEWAY_IP}/openwebui/  # Should return OpenWebUI (200 or 30x redirect)
+curl -I http://${GATEWAY_IP}/  # Should return OpenWebUI (200 or 30x redirect)
 ```
 
 **Authentication failures (401 Unauthorized)**
