@@ -544,8 +544,10 @@ k8s_resource(
         "openwebui-custom-css:configmap",
         "openwebui-logos:configmap",
         "seed-config-scripts:configmap",
+        "openwebui-route:httproute",
+        "openwebui-route-auth:securitypolicy",
     ],
-    resource_deps=["openwebui-secret", "minimax-service", "kueue"],
+    resource_deps=["openwebui-secret", "minimax-service", "kueue", "llm-gateway"],
     labels=["openwebui"],
 )
 
