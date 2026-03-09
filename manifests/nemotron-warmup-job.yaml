@@ -1,0 +1,45 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Nemotron Parse Warmup Job
+#
+# Sends 48 concurrent dummy inference requests (3× replica count) to ensure
+# every replica processes at least one forward pass before real traffic
+# arrives.  This warms up lazy CUDA kernels, flash-attention JIT, and the
+# trust-remote-code image processor.
+#
+# Runs during MiniMax M2.5 weight loading (~8 min) so Nemotron is fully hot
+# by the time the research pipeline is usable.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nemotron-warmup
+  namespace: default
+  labels:
+    app: nemotron-warmup
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: nemotron-warmup
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: warmup
+          image: busybox:1.37
+          command: ["/bin/sh", "/scripts/warmup-nemotron.sh"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: model-sync-scripts
+            defaultMode: 0755

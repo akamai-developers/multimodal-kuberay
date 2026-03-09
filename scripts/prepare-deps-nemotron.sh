@@ -14,8 +14,9 @@ set -e
 MODEL_PID=$!
 
 # ── Pre-warm pip cache (background) ──────────────────────────────
-# Populate the pip cache so the runtime_env pip install
-# hits only local wheels (seconds instead of minutes).
+# Download wheels into the shared pip cache volume so the
+# runtime_env pip install (which runs inside the worker container)
+# hits only local files instead of fetching from PyPI.
 (
   echo "[prepare-deps] Pre-downloading pip wheels..."
   pip download --quiet \

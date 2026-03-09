@@ -28,17 +28,30 @@ spec:
   type: ClusterIP
 ---
 # ─────────────────────────────────────────────────────────────────────────────
-# RayService — Nemotron Parse v1.2 OCR
+# RayService — Nemotron Parse v1.2 OCR (MIG-partitioned)
 #
-# Uses ray.serve.llm:build_openai_app (same as MiniMax) with 1 GPU per
-# replica.  cloudpickle>=3.1.0 fixes the __module__ KeyError with
-# trust_remote_code classes.  With 2× 2-GPU nodes → up to 4 replicas.
+# Each physical GPU is partitioned into 4x 1g.24gb MIG instances (24 GB
+# each) via the GPU Operator MIG manager.  With 2x 2-GPU nodes that
+# gives 16 MIG devices total.  Each replica uses 1 MIG device.
+#
+# Architecture: 16 worker pods × 1 MIG device each.  CDI gives each pod
+# exactly 1 MIG instance as CUDA device 0 — no runtime patching needed.
+# Trade-off: more Ray worker overhead (16 processes), but clean GPU setup.
+#
+# cloudpickle>=3.1.0 fixes the __module__ KeyError with trust_remote_code.
 # ─────────────────────────────────────────────────────────────────────────────
 apiVersion: ray.io/v1
 kind: RayService
 metadata:
   name: ray-serve-nemotron-parse
 spec:
+  # GPU-intensive workers consume all MIG devices on both nodes.
+  # The default NewClusterBeforeOldDeleted strategy creates a second
+  # cluster that can never schedule (needs 16 GPUs, all are taken).
+  # None = in-place update; if the spec forces a new cluster KubeRay
+  # will delete the old one first.
+  upgradeStrategy:
+    type: None
   serveConfigV2: |
     applications:
     - name: nemotron-parse
@@ -58,6 +71,7 @@ spec:
             enforce_eager: true
             disable_log_stats: false
             tensor_parallel_size: 1
+            load_format: safetensors
           runtime_env:
             pip:
               - "numpy<2.0"
@@ -66,17 +80,15 @@ spec:
               - albumentations==2.0.8
               - open_clip_torch
           deployment_config:
-            autoscaling_config:
-              min_replicas: 1
-              max_replicas: 4
-              target_ongoing_requests: 1
-              metrics_interval_s: 2
-              look_back_period_s: 10
-              upscale_delay_s: 3
-              downscale_delay_s: 120
-            max_ongoing_requests: 10
+            num_replicas: 16              # All 16 MIG workers serve from startup
+            max_ongoing_requests: 16
             health_check_period_s: 5
             health_check_timeout_s: 120
+          placement_group_config:
+            strategy: SPREAD
+            bundles:
+              - GPU: 1
+                CPU: 1
 
   rayClusterConfig:
     rayVersion: "2.54.0"
@@ -131,37 +143,35 @@ spec:
                 sizeLimit: 12Gi
 
     workerGroupSpecs:
-      # ── Worker group on 2-GPU nodes ──────────────────────────────────────
-      # Two workers (one per 2-GPU node), each registering 2 GPUs.
-      # ray.serve.llm allocates 1 GPU per replica via placement bundles
-      # (tensor_parallel_size=1) → up to 2 replicas per 2-GPU worker.
-      - replicas: 2
-        minReplicas: 2
-        maxReplicas: 2
+      # ── 1 worker per MIG device (16 total) ──────────────────────────────
+      # Each pod requests exactly 1 nvidia.com/gpu (= 1 MIG instance).
+      # CDI gives each pod its MIG device as CUDA device 0 — no runtime
+      # patching of Ray or vLLM needed.  Trade-off: 16 Ray worker
+      # processes instead of 2, but eliminates mig-wrapper.sh patches.
+      # num-cpus=4: Each worker needs headroom for placement-group (1 CPU),
+      # Serve proxy actor (1 CPU), OpenAiIngress replica (1 CPU if co-located),
+      # and the model download task (1 CPU).  Without enough logical CPUs,
+      # the initialize_remote_node download task deadlocks
+      # (PENDING_NODE_ASSIGNMENT).
+      - replicas: 16
+        minReplicas: 16
+        maxReplicas: 16
         numOfHosts: 1
         groupName: nemotron-gpu-group
         rayStartParams:
-          num-gpus: "2"
+          num-gpus: "1"
+          num-cpus: "4"
         template:
           spec:
-            # Keep workers on the 2-GPU nodes only (4-GPU node is for MiniMax)
+            # Keep workers on MIG-partitioned nodes only (4-GPU node is for MiniMax)
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: nvidia.com/gpu.count
+                        - key: nvidia.com/mig.config
                           operator: In
-                          values: ["2"]
-              # Spread workers across the two 2-GPU nodes
-              podAntiAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  - labelSelector:
-                      matchExpressions:
-                        - key: ray.io/group
-                          operator: In
-                          values: ["nemotron-gpu-group"]
-                    topologyKey: kubernetes.io/hostname
+                          values: ["all-1g.24gb"]
 
             initContainers:
               # Download model from S3 + pre-warm pip cache in parallel.
@@ -175,10 +185,6 @@ spec:
                   - secretRef:
                       name: obj-store-secret
                 env:
-                  # Nemotron has a single ~3.5 GB safetensors file.
-                  # Default concurrency (5 parts × 50 MiB) bottlenecks on
-                  # one TCP stream. 64 concurrent 64 MiB parts saturate
-                  # the network link for large single-file downloads.
                   - name: S5CMD_CONCURRENCY
                     value: "64"
                   - name: S5CMD_PART_SIZE
@@ -194,6 +200,23 @@ spec:
             containers:
               - name: ray-worker
                 image: rayproject/ray-llm:2.54.0-py311-cu128
+                # Override KubeRay's auto-injected readiness probe.
+                # The default probe checks BOTH raylet health AND Serve
+                # proxy health (port 8000).  Only workers hosting a vLLM
+                # replica run a Serve proxy, so idle workers always fail
+                # the second check and show 0/1 Ready.  This probe checks
+                # only raylet health, which passes on all workers.
+                readinessProbe:
+                  exec:
+                    command:
+                      - bash
+                      - -c
+                      - "wget --tries 1 -T 2 -q -O- http://localhost:52365/api/local_raylet_healthz | grep success"
+                  initialDelaySeconds: 10
+                  periodSeconds: 5
+                  timeoutSeconds: 4
+                  failureThreshold: 3
+                  successThreshold: 1
                 env:
                   - name: HUGGING_FACE_HUB_TOKEN
                     valueFrom:
@@ -202,12 +225,12 @@ spec:
                         key: hf_token
                 resources:
                   requests:
-                    cpu: 4
-                    memory: 16Gi
-                    nvidia.com/gpu: "2"
+                    cpu: 3
+                    memory: 8Gi
+                    nvidia.com/gpu: "1"
                   limits:
-                    memory: 32Gi
-                    nvidia.com/gpu: "2"
+                    memory: 16Gi
+                    nvidia.com/gpu: "1"
                 volumeMounts:
                   - name: model-cache
                     mountPath: /model-cache
@@ -215,6 +238,8 @@ spec:
                     mountPath: /home/ray/.cache/pip
                   - name: dshm
                     mountPath: /dev/shm
+                  - name: model-sync
+                    mountPath: /scripts
             volumes:
               - name: model-cache
                 emptyDir:
@@ -225,7 +250,7 @@ spec:
               - name: dshm
                 emptyDir:
                   medium: Memory
-                  sizeLimit: 12Gi
+                  sizeLimit: 4Gi
               - name: model-sync
                 configMap:
                   name: model-sync-scripts

@@ -38,7 +38,7 @@ class Pipeline:
         )
         MINIMAX_API_KEY: str = os.getenv("OPENAI_API_KEY", "placeholder")
 
-        # Nemotron Parse OCR — load-balanced across 4 replicas
+        # Nemotron Parse OCR — load-balanced across 16 MIG GPU replicas
         NEMOTRON_PARSE_API_URL: str = (
             "http://nemotron-parse-svc.default.svc.cluster.local:8000/v1"
         )

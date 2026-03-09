@@ -6,35 +6,210 @@ Deploy a GPU-accelerated deep research agent on Linode Kubernetes Engine with MC
 
 This repository demonstrates how to deploy a production-ready deep research agent using KubeRay on Linode Kubernetes Engine (LKE). A user asks a research question and the system autonomously searches arXiv, reads full papers via OCR, and synthesizes a comprehensive research report — all streamed in real time through OpenWebUI or a standard API endpoint.
 
-**Learning Objectives**: Orchestrate GPU workloads on Kubernetes, serve LLMs with Ray Serve, wire up MCP tool servers, and configure secure API gateways.
+**Learning Objectives**: Orchestrate GPU workloads on Kubernetes, serve LLMs with Ray Serve, wire up MCP tool servers, configure NVIDIA MIG partitioning, and set up secure API gateways.
 
 **Current Stack**:
 - **MiniMax M2.5** — Frontier MoE reasoning model (4× Blackwell GPUs, tool-use, 65K context)
-- **NVIDIA Nemotron Parse v1.2** — High-throughput OCR model (auto-scales 1–4 replicas across 2× Blackwell nodes)
+- **NVIDIA Nemotron Parse v1.2** — High-throughput OCR model (16 fixed replicas on MIG-partitioned GPUs, 1 MIG device each)
 - **MCP Servers** — ArXiv search + Paper-to-Text OCR, exposed as Streamable HTTP tool servers
 - **OpenWebUI** — Chat UI with the deep research pipeline available as a selectable model
 
 ## Features
 
-- 🔬 **Deep research pipeline** — Two-phase agent: search & select papers → OCR & synthesize report
+- 🔬 **Deep research pipeline** — Two-phase MCP agent: search & select papers → OCR & synthesize report
 - 🛠️ **MCP tool servers** — ArXiv search and PDF-to-text OCR via FastMCP (Streamable HTTP transport)
 - 🚀 **OpenAI-compatible API** — Standard `/v1/chat/completions` endpoint via Envoy Gateway
-- 🎮 **GPU-accelerated inference** — NVIDIA Blackwell GPU support (8× RTX PRO 6000)
+- 🎮 **GPU-accelerated inference** — NVIDIA Blackwell GPUs with MIG partitioning (8× RTX PRO 6000)
+- 🧩 **NVIDIA MIG** — Multi-Instance GPU splits 4 physical GPUs into 16 isolated 24 GB instances
 - 🔧 **Infrastructure-as-Code** — Terraform for cluster provisioning, Tilt for deployment orchestration
 - 🔐 **Secure by default** — Bearer token authentication, deny-by-default security policies
 - 📊 **Full observability** — Grafana dashboards, Prometheus metrics, Ray Dashboard
 - ⚡ **Real-time streaming** — Research progress streamed token-by-token to the UI
 - 📦 **Model weight caching** — Akamai Object Storage accelerates cold starts via s5cmd
+- 🔥 **Eager warmup** — All 16 OCR replicas are pre-heated at deploy time for instant first-request response
 
 ## Architecture
 
+### System Overview
+
+```mermaid
+graph TB
+    subgraph External["External Access"]
+        User["👤 User"]
+        API["API Client"]
+    end
+
+    subgraph Gateway["Envoy Gateway"]
+        GW["llm-gateway<br/>LoadBalancer :80"]
+        Auth["SecurityPolicy<br/>Bearer Token Auth"]
+        GW --> Auth
+    end
+
+    subgraph UI["Chat Interface"]
+        WebUI["OpenWebUI<br/>+ Custom Branding"]
+        Pipelines["Pipelines Server<br/>:9099"]
+        WebUI --> Pipelines
+    end
+
+    subgraph MCP["MCP Tool Servers"]
+        ArXiv["ArXiv Search<br/>FastMCP :8000"]
+        PaperOCR["Paper-to-Text<br/>FastMCP :8000"]
+    end
+
+    subgraph Ray["Ray Serve Clusters"]
+        subgraph MiniMaxCluster["MiniMax M2.5 RayService"]
+            MMHead["Head Pod<br/>num-cpus=0"]
+            MMWorker["Worker Pod<br/>4× GPUs · TP=4"]
+        end
+        subgraph NemotronCluster["Nemotron Parse v1.2 RayService"]
+            NPHead["Head Pod<br/>num-cpus=0"]
+            NPWorkers["16× Worker Pods<br/>1 MIG GPU each"]
+        end
+    end
+
+    subgraph Operators["Cluster Operators"]
+        GPUOp["NVIDIA GPU Operator<br/>CDI · MIG Manager"]
+        KubeRay["KubeRay Operator"]
+        Kueue["Kueue"]
+        Prom["kube-prometheus-stack<br/>Grafana + Prometheus"]
+    end
+
+    subgraph Storage["Model Storage"]
+        ObjStore["Akamai Object Storage<br/>model-cache bucket"]
+    end
+
+    User --> WebUI
+    API --> GW
+    GW --> MMHead
+    Pipelines --> ArXiv
+    Pipelines --> PaperOCR
+    PaperOCR --> NPHead
+    Pipelines --> MMHead
+    ArXiv -.->|"arXiv API"| ExternalArXiv["arXiv.org"]
+    ObjStore -.->|"s5cmd sync"| MMWorker
+    ObjStore -.->|"s5cmd sync"| NPWorkers
+```
+
+### GPU / MIG Topology
+
+Each physical GPU on the 2-GPU nodes is partitioned into 4× MIG instances using the `all-1g.24gb` profile (24 GB VRAM each). The GPU Operator's MIG Manager handles partitioning automatically via node labels. CDI (Container Device Interface) assigns each pod exactly one MIG instance as CUDA device 0 — no runtime patching needed.
+
+```mermaid
+graph LR
+    subgraph Node1["Node 1 — 4× RTX PRO 6000 Blackwell"]
+        GPU0["GPU 0 — 96 GB"]
+        GPU1["GPU 1 — 96 GB"]
+        GPU2["GPU 2 — 96 GB"]
+        GPU3["GPU 3 — 96 GB"]
+        MM["MiniMax M2.5<br/>TP=4 across all 4 GPUs"]
+        GPU0 --- MM
+        GPU1 --- MM
+        GPU2 --- MM
+        GPU3 --- MM
+    end
+
+    subgraph Node2["Node 2 — 2× RTX PRO 6000 Blackwell (MIG)"]
+        subgraph GPU4["GPU 0 — MIG 4× 1g.24gb"]
+            M0["MIG 0<br/>24 GB"]
+            M1["MIG 1<br/>24 GB"]
+            M2["MIG 2<br/>24 GB"]
+            M3["MIG 3<br/>24 GB"]
+        end
+        subgraph GPU5["GPU 1 — MIG 4× 1g.24gb"]
+            M4["MIG 4<br/>24 GB"]
+            M5["MIG 5<br/>24 GB"]
+            M6["MIG 6<br/>24 GB"]
+            M7["MIG 7<br/>24 GB"]
+        end
+    end
+
+    subgraph Node3["Node 3 — 2× RTX PRO 6000 Blackwell (MIG)"]
+        subgraph GPU6["GPU 0 — MIG 4× 1g.24gb"]
+            M8["MIG 8<br/>24 GB"]
+            M9["MIG 9<br/>24 GB"]
+            M10["MIG 10<br/>24 GB"]
+            M11["MIG 11<br/>24 GB"]
+        end
+        subgraph GPU7["GPU 1 — MIG 4× 1g.24gb"]
+            M12["MIG 12<br/>24 GB"]
+            M13["MIG 13<br/>24 GB"]
+            M14["MIG 14<br/>24 GB"]
+            M15["MIG 15<br/>24 GB"]
+        end
+    end
+```
+
+**GPU allocation summary**:
+
+| Node | GPUs | MIG | Model | Workers |
+|------|------|-----|-------|---------|
+| 4-GPU node | 4× RTX PRO 6000 (96 GB each) | Disabled | MiniMax M2.5 (TP=4) | 1 worker pod |
+| 2-GPU node × 2 | 2× RTX PRO 6000 each | 4× 1g.24gb per GPU | Nemotron Parse v1.2 | 8 worker pods per node (16 total) |
+
+### Deep Research Pipeline
+
+The research pipeline is a two-phase MCP agentic workflow orchestrated by MiniMax M2.5:
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant WebUI as OpenWebUI
+    participant Pipe as Pipelines Server
+    participant MM as MiniMax M2.5
+    participant ArXiv as ArXiv MCP Server
+    participant PaperMCP as Paper-to-Text MCP
+    participant NP as Nemotron Parse<br/>(16 replicas)
+
+    User->>WebUI: Research question
+    WebUI->>Pipe: /v1/chat/completions (stream: true)
+
+    Note over Pipe,MM: Phase 1 — Search & Select
+
+    Pipe->>MM: System prompt + topic
+    loop 2-3 search queries
+        MM->>Pipe: Tool call: search_arxiv
+        Pipe->>ArXiv: tools/call search_arxiv
+        ArXiv-->>Pipe: Paper results
+        Pipe->>MM: Tool result
+    end
+    MM-->>Pipe: Selected 6-8 papers
+
+    Note over Pipe,NP: Phase 2 — Read & Synthesize
+
+    Pipe->>MM: Papers + Phase 2 prompt
+    MM->>Pipe: Tool call: read_papers
+    Pipe->>PaperMCP: tools/call read_papers
+
+    par Download all PDFs
+        PaperMCP->>PaperMCP: Download 6-8 PDFs
+    end
+    par Render all pages
+        PaperMCP->>PaperMCP: PDF → PNG (ProcessPool)
+    end
+    par OCR all pages concurrently
+        PaperMCP->>NP: Page 1
+        PaperMCP->>NP: Page 2
+        PaperMCP->>NP: ...
+        PaperMCP->>NP: Page N
+        NP-->>PaperMCP: OCR text (all pages)
+    end
+
+    PaperMCP-->>Pipe: Full paper texts
+    Pipe->>MM: OCR results
+    MM-->>Pipe: Streamed synthesis report
+    Pipe-->>WebUI: Token-by-token stream
+    WebUI-->>User: Research report
+```
+
+**Throughput design**: The Paper-to-Text MCP server fires all page OCR requests concurrently (no batching). With 16 Nemotron replicas (each processing up to 8 sequences via vLLM continuous batching), the cluster handles ~128 concurrent OCR sequences. A typical research query (8 papers × 30 pages = 240 pages) completes in roughly the time of 2 sequential OCR requests.
+
 **Components**:
 - **Linode LKE** — Managed Kubernetes cluster with GPU node pools (1× 4-GPU + 2× 2-GPU Blackwell nodes)
-- **NVIDIA GPU Operator** — Automated GPU driver and runtime management
+- **NVIDIA GPU Operator** — GPU driver/runtime management with CDI and MIG Manager
 - **KubeRay Operator** — Ray cluster lifecycle management on Kubernetes
 - **Ray Serve** — Scalable LLM serving framework:
   - **MiniMax M2.5** — Frontier MoE model for reasoning and tool-use (4 GPUs, tensor parallelism)
-  - **Nemotron Parse v1.2** — Fast OCR model (1 GPU/replica, auto-scales 1–4 replicas)
+  - **Nemotron Parse v1.2** — OCR model (16 fixed replicas, 1 MIG GPU each, pre-warmed at deploy time)
 - **OpenWebUI** — Chat interface with persistent storage and custom branding
 - **Pipelines Server** — Hosts the MCP research pipeline, exposes it as a selectable model in OpenWebUI
 - **MCP Servers** — FastMCP-based tool servers (ArXiv search, Paper-to-Text OCR)
@@ -46,8 +221,8 @@ This repository demonstrates how to deploy a production-ready deep research agen
 **Request Flow** (Deep Research Pipeline):
 1. User submits a research question via OpenWebUI or the Gateway API
 2. OpenWebUI routes to the Pipelines server, which runs the MCP research pipeline
-3. **Phase 1 — Search & Select**: MiniMax M2.5 calls the ArXiv MCP server to search for and select relevant papers
-4. **Phase 2 — Read & Synthesize**: MiniMax M2.5 calls the Paper-to-Text MCP server, which OCRs papers through Nemotron Parse, then writes a comprehensive report
+3. **Phase 1 — Search & Select**: MiniMax M2.5 calls the ArXiv MCP server to search for and select 6-8 relevant papers
+4. **Phase 2 — Read & Synthesize**: MiniMax M2.5 calls the Paper-to-Text MCP server, which downloads PDFs, renders pages to PNG, and OCRs all pages concurrently through 16 Nemotron Parse replicas, then writes a comprehensive report with inline citations
 5. The report streams back token-by-token to the user
 
 ## Prerequisites
@@ -109,8 +284,8 @@ Once complete, access the Tilt UI at http://localhost:10350 to monitor deploymen
 | `kubernetes_version` | Kubernetes version           | `"1.34"`                             | Check LKE supported versions                                                                                |
 | `gpu_big_node_type`  | Large GPU node type (MiniMax)| `"g3-gpu-rtxpro6000-blackwell-4"`    | 4× Blackwell GPUs — hosts MiniMax M2.5                                                                     |
 | `gpu_big_node_count` | Number of large GPU nodes    | `1`                                  | 1 node for the MoE model                                                                                   |
-| `gpu_node_type`      | Small GPU node type (OCR)    | `"g3-gpu-rtxpro6000-blackwell-2"`    | 2× Blackwell GPUs — hosts Nemotron Parse replicas                                                           |
-| `gpu_node_count`     | Number of small GPU nodes    | `2`                                  | 2 nodes → up to 4 OCR replicas                                                                              |
+| `gpu_node_type`      | Small GPU node type (OCR)    | `"g3-gpu-rtxpro6000-blackwell-2"`    | 2× Blackwell GPUs — MIG-partitioned for Nemotron Parse (8 instances/node)        |
+| `gpu_node_count`     | Number of small GPU nodes    | `2`                                  | 2 nodes × 8 MIG instances = 16 OCR replicas                                     |
 | `tags`               | Resource tags                | `["kuberay", "llm", "gpu"]`          | For organization and tracking                                                                               |
 
 ### Environment Variables (`.env`)
@@ -141,10 +316,11 @@ Once complete, access the Tilt UI at http://localhost:10350 to monitor deploymen
 2. **NVIDIA Nemotron Parse v1.2** (`nvidia/NVIDIA-Nemotron-Parse-v1.2`)
    - **Role**: OCR engine — converts PDF pages to structured text for the research pipeline
    - **Developer**: NVIDIA
-   - **GPU Allocation**: 1 GPU per replica (auto-scales 1–4 replicas across 2× 2-GPU nodes)
+   - **GPU Allocation**: 1 MIG instance (24 GB) per replica, 16 replicas across 2× 2-GPU nodes
+   - **MIG Profile**: `all-1g.24gb` — 4 instances per physical GPU, managed by GPU Operator MIG Manager
    - **Context Window**: 8,192 tokens
    - **Capabilities**: Page-level OCR with layout preservation, 30+ language support
-   - **Scaling**: Aggressive autoscaling (3s upscale delay, 2s metrics interval) for burst OCR workloads
+   - **Throughput**: 16 fixed replicas × 8 concurrent sequences = 128 parallel OCR requests; all replicas pre-warmed at deploy time
    - **Model Source**: Cached in Akamai Object Storage, synced to local volume at boot
 
 ### MCP Tool Servers
@@ -175,7 +351,7 @@ Once deployed, the following services are available:
   Direct access to MiniMax M2.5 serving endpoint (bypasses Gateway)
 
 - **Nemotron Parse Ray Dashboard**: http://localhost:18265 (via Tilt port-forward)  
-  Monitor OCR model replicas and autoscaling
+  Monitor OCR model replicas and GPU utilization across 16 MIG instances
 
 - **Grafana**: http://localhost:3000 (via Tilt port-forward)  
   Pre-configured Ray dashboards for model cache, serve deployments, and LLM metrics
@@ -307,7 +483,7 @@ make clean
 ```
 multimodal-kuberay/
 ├── Makefile                        # Build/deploy/test commands
-├── Tiltfile                        # Kubernetes deployment orchestration (~570 lines)
+├── Tiltfile                        # Kubernetes deployment orchestration (~690 lines)
 ├── main.tf                         # Terraform: LKE cluster with GPU node pools
 ├── variables.tf                    # Terraform: Input variables
 ├── outputs.tf                      # Terraform: Outputs (kubeconfig, cluster ID)
@@ -328,7 +504,8 @@ multimodal-kuberay/
 ├── manifests/
 │   ├── gateway.yaml                # Envoy Gateway + SecurityPolicy + ClientTrafficPolicy
 │   ├── rayservice-minimax.yaml     # MiniMax M2.5 RayService (4 GPUs)
-│   ├── rayservice-nemotron-parse.yaml  # Nemotron Parse v1.2 RayService (auto-scaling)
+│   ├── rayservice-nemotron-parse.yaml  # Nemotron Parse v1.2 RayService (16 MIG replicas)
+│   ├── nemotron-warmup-job.yaml    # Warmup Job — pre-heats all 16 OCR replicas
 │   ├── openwebui.yaml              # OpenWebUI + Pipelines server deployments
 │   ├── mcp-arxiv-search.yaml       # ArXiv Search MCP server
 │   ├── mcp-paper-to-text.yaml      # Paper-to-Text OCR MCP server
@@ -340,9 +517,14 @@ multimodal-kuberay/
 │   ├── arxiv_search_server.py      # FastMCP server: search_arxiv, get_paper_info
 │   └── paper_to_text_server.py     # FastMCP server: read_papers, read_single_paper
 ├── serve/
-│   └── mcp_research_pipeline.py    # Deep research pipeline (OpenWebUI Pipelines)
+│   ├── mcp_research_pipeline.py    # Deep research agent (MCP-based, primary pipeline)
+│   └── research_pipeline.py        # Direct research pipeline (legacy, not used)
 ├── scripts/
 │   ├── model-sync.sh               # s5cmd-based Object Storage model downloader
+│   ├── model-upload.sh             # HuggingFace → Object Storage caching
+│   ├── prepare-deps-nemotron.sh    # Init container: parallel model download + pip warmup
+│   ├── warmup-nemotron.sh          # Warmup: sends 48 concurrent dummy requests
+│   ├── seed-streaming-config.sh    # OpenWebUI postStart hook
 │   ├── test-llm.sh                 # MiniMax M2.5 API smoke test
 │   └── test-pipeline.sh            # Deep research pipeline test
 ├── AGENTS.md                       # Guide for AI coding agents
@@ -367,6 +549,12 @@ kubectl get pods -n gpu-operator
 
 # View GPU operator logs
 kubectl logs -n gpu-operator -l app=nvidia-gpu-operator
+
+# Check MIG configuration state on nodes
+kubectl get nodes -l nvidia.com/mig.config -o custom-columns='NODE:.metadata.name,MIG_CONFIG:.metadata.labels.nvidia\.com/mig\.config,MIG_STATE:.metadata.labels.nvidia\.com/mig\.config\.state'
+
+# Verify MIG devices are advertised
+kubectl get nodes -l nvidia.com/mig.config -o jsonpath='{range .items[*]}{.metadata.name}: {.status.allocatable.nvidia\.com/gpu} GPUs{"\n"}{end}'
 ```
 
 **Model download is slow or stuck**
@@ -412,15 +600,30 @@ kubectl get pods -l app=mcp-paper-to-text
 # Verify Nemotron Parse is serving (needed for OCR)
 kubectl get rayservice ray-serve-nemotron-parse
 
+# Check all 16 replicas are running
+kubectl exec $(kubectl get pod -l ray.io/node-type=head,app=nemotron-parse -o name | head -1) -- \
+  python3 -c "import ray; from ray import serve; ray.init('auto'); s=serve.status(); print({n: {k:v for k,v in d.replica_states.items()} for n,d in s.applications['nemotron-parse'].deployments.items()})"
+
 # Check the Pipelines server logs for errors
 kubectl logs -l app=openwebui-pipelines --tail=100 -f
+```
+
+**Nemotron Parse workers show 0/1 Ready**
+```bash
+# KubeRay injects a readiness probe that checks both raylet health AND Serve
+# proxy health (port 8000).  Only workers hosting a vLLM replica run a Serve
+# proxy.  The rayservice-nemotron-parse.yaml overrides this with a raylet-only
+# probe.  If you see 0/1, check the probe:
+kubectl get pod <pod-name> -o jsonpath='{.spec.containers[0].readinessProbe}' | python3 -m json.tool
+
+# It should check only localhost:52365/api/local_raylet_healthz (not port 8000)
 ```
 
 ### Getting More Help
 
 - **Tilt UI**: http://localhost:10350 — Shows detailed resource status and logs
 - **MiniMax Ray Dashboard**: http://localhost:8265 — View cluster and serving metrics
-- **Nemotron Parse Ray Dashboard**: http://localhost:18265 — Monitor OCR autoscaling
+- **Nemotron Parse Ray Dashboard**: http://localhost:18265 — Monitor 16 OCR replicas across MIG instances
 - **Grafana**: http://localhost:3000 — Ray-specific dashboards (default login: admin/prom-operator)
 - **Kubernetes Logs**: `kubectl logs <pod-name>` — View detailed pod logs
 - **AGENTS.md**: Detailed development workflows and troubleshooting

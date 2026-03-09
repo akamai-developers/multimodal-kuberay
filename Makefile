@@ -97,6 +97,20 @@ down:
 	fi
 	@echo "=== Tearing down Tilt resources ==="
 	KUBECONFIG=$${KUBECONFIG:-$$(pwd)/kubeconfig} tilt down || true
+	@KC=$${KUBECONFIG:-$$(pwd)/kubeconfig}; \
+	echo "=== Reverting MIG configuration ==="; \
+	for node in $$(KUBECONFIG=$$KC kubectl get nodes -l nvidia.com/gpu.count=2,nvidia.com/mig.config -o name 2>/dev/null); do \
+		echo "Labeling $$node -> nvidia.com/mig.config=all-disabled"; \
+		KUBECONFIG=$$KC kubectl label $$node nvidia.com/mig.config=all-disabled --overwrite 2>/dev/null || true; \
+	done; \
+	echo "Waiting for MIG manager to disable MIG (up to 120s)..."; \
+	for i in $$(seq 1 24); do \
+		pending=$$(KUBECONFIG=$$KC kubectl get nodes -l nvidia.com/gpu.count=2,nvidia.com/mig.config=all-disabled -o jsonpath='{range .items[*]}{.metadata.labels.nvidia\.com/mig\.config\.state}{"\n"}{end}' 2>/dev/null | { grep -cv success 2>/dev/null || true; }); \
+		pending=$${pending:-0}; \
+		if [ "$$pending" = "0" ]; then echo "MIG disabled on all nodes"; break; fi; \
+		echo "  $$pending node(s) still reconfiguring..."; \
+		sleep 5; \
+	done
 	@echo ""
 	@echo "=== Cleaning up residual resources ==="
 	@KC=$${KUBECONFIG:-$$(pwd)/kubeconfig}; \

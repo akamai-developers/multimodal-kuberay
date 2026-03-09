@@ -46,8 +46,6 @@ spec:
               value: "8000"
             - name: NEMOTRON_PARSE_API_URL
               value: "http://nemotron-parse-svc.default.svc.cluster.local:8000/v1"
-            - name: PAGE_BATCH_SIZE
-              value: "5"
             - name: MAX_PAGES_PER_PAPER
               value: "30"
           ports:

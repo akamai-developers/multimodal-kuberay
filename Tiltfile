@@ -94,6 +94,64 @@ helm_resource(
     labels=["nvidia"],
 )
 
+# ░█▄█░▀█▀░█▀▀░░░█▀▀░█▀█░█▀█░█▀▀░▀█▀░█▀▀
+# ░█░█░░█░░█░█░░░█░░░█░█░█░█░█▀▀░░█░░█░█
+# ░▀░▀░▀▀▀░▀▀▀░░░▀▀▀░▀▀▀░▀░▀░▀░░░▀▀▀░▀▀▀
+#
+# Enable MIG (Multi-Instance GPU) on the 2-GPU Nemotron nodes.
+# Each physical GPU is partitioned into 4x 1g.24gb instances (24 GB each)
+# giving 8 MIG devices per node (16 total across both 2-GPU nodes).
+# The 4-GPU MiniMax node is left untouched (whole GPUs).
+
+local_resource(
+    "mig-config",
+    cmd="""set -euo pipefail
+DESIRED="all-1g.24gb"
+
+# Wait for GPU feature discovery to label the 2-GPU nodes
+# (needed on fresh clusters — GFD takes a moment after GPU Operator install)
+echo "Waiting for GPU feature discovery to label 2-GPU nodes..."
+for i in $(seq 1 60); do
+  new=$(kubectl get nodes -l nvidia.com/gpu.count=2 -o name 2>/dev/null | wc -l | tr -d ' ')
+  existing=$(kubectl get nodes -l nvidia.com/mig.config=$DESIRED -o name 2>/dev/null | wc -l | tr -d ' ')
+  total=$((new + existing))
+  if [ "$total" -ge 2 ]; then
+    echo "Found $total target nodes"
+    break
+  fi
+  echo "  $total/2 target nodes discovered..."
+  sleep 5
+done
+
+# Discover the 2-GPU nodes (pre-MIG) plus any already MIG-configured
+NEW=$(kubectl get nodes -l nvidia.com/gpu.count=2 -o name 2>/dev/null || true)
+EXISTING=$(kubectl get nodes -l nvidia.com/mig.config=$DESIRED -o name 2>/dev/null || true)
+NODES=$(printf '%s\n%s' "$NEW" "$EXISTING" | sort -u | grep -v '^$' || true)
+if [ -z "$NODES" ]; then
+  echo "ERROR: No 2-GPU nodes found for MIG configuration"
+  exit 1
+fi
+TOTAL=$(echo "$NODES" | wc -l | tr -d ' ')
+for node in $NODES; do
+  echo "Labeling $node -> nvidia.com/mig.config=$DESIRED"
+  kubectl label "$node" nvidia.com/mig.config="$DESIRED" --overwrite
+done
+echo "Waiting for MIG manager to finish configuration..."
+for i in $(seq 1 60); do
+  ready=$(kubectl get nodes -l nvidia.com/mig.config=$DESIRED,nvidia.com/mig.config.state=success -o name 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$ready" = "$TOTAL" ]; then
+    echo "MIG configuration complete ($ready/$TOTAL nodes)"
+    exit 0
+  fi
+  echo "  $ready/$TOTAL nodes ready..."
+  sleep 5
+done
+echo "ERROR: Timeout waiting for MIG configuration after 300s"
+exit 1""",
+    resource_deps=["gpu-operator"],
+    labels=["nvidia"],
+)
+
 # ░█░█░█░█░█▀▄░█▀▀░█▀▄░█▀█░█░█░░░█▀█░█▀█░█▀▀░█▀▄░█▀█░▀█▀░█▀█░█▀▄
 # ░█▀▄░█░█░█▀▄░█▀▀░█▀▄░█▀█░░█░░░░█░█░█▀▀░█▀▀░█▀▄░█▀█░░█░░█░█░█▀▄
 # ░▀░▀░▀▀▀░▀▀░░▀▀▀░▀░▀░▀░▀░░▀░░░░▀▀▀░▀░░░▀▀▀░▀░▀░▀░▀░░▀░░▀▀▀░▀░▀
@@ -298,10 +356,12 @@ k8s_resource(
 )
 
 # Model Sync Script ConfigMap — shared scripts for init containers
-# Includes the s5cmd-based object storage downloader and the Nemotron
-# prepare-deps wrapper (parallel model download + pip cache warmup).
+# Includes the s5cmd-based object storage downloader, the Nemotron
+# prepare-deps wrapper (parallel model download + pip cache warmup),
+# and the warmup script (sends dummy requests to pre-heat CUDA caches).
 model_sync_script = str(read_file("scripts/model-sync.sh"))
 prepare_deps_nemotron_script = str(read_file("scripts/prepare-deps-nemotron.sh"))
+warmup_nemotron_script = str(read_file("scripts/warmup-nemotron.sh"))
 k8s_yaml(encode_yaml({
     "apiVersion": "v1",
     "kind": "ConfigMap",
@@ -312,6 +372,7 @@ k8s_yaml(encode_yaml({
     "data": {
         "model-sync.sh": model_sync_script,
         "prepare-deps-nemotron.sh": prepare_deps_nemotron_script,
+        "warmup-nemotron.sh": warmup_nemotron_script,
     },
 }))
 
@@ -381,8 +442,10 @@ local_resource(
 # ░█░█░█▀▀░█░█░█░█░░█░░█▀▄░█░█░█░█░░░█▀▀░█▀█░█▀▄░▀▀█░█▀▀
 # ░▀░▀░▀▀▀░▀░▀░▀▀▀░▀▀▀░▀░▀░▀▀▀░▀░▀░░░▀░░░▀░▀░▀░▀░▀▀▀░▀▀▀
 
-# Nemotron Parse v1.2 — KubeRay RayService with fractional GPUs (0.5 GPU/replica)
-# 2 workers on the 2× 2-GPU nodes, Ray Serve packs 2 replicas per GPU → up to 8 replicas
+# Nemotron Parse v1.2 — KubeRay RayService on MIG-partitioned GPUs
+# 16 workers (1 per MIG device) across the 2x 2-GPU nodes.
+# Each pod gets 1 MIG 1g.24gb instance via CDI as CUDA device 0.
+# No runtime patching needed — clean GPU enumeration.
 k8s_yaml("manifests/rayservice-nemotron-parse.yaml")
 k8s_resource(
     new_name="nemotron-parse-service",
@@ -390,7 +453,7 @@ k8s_resource(
         "ray-serve-nemotron-parse:rayservice",
         "nemotron-parse-svc:service",
     ],
-    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload", "model-sync-scripts", "gpu-operator"],
+    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload", "model-sync-scripts", "gpu-operator", "mig-config"],
     labels=["kuberay"],
 )
 
@@ -400,6 +463,17 @@ local_resource(
     resource_deps=["nemotron-parse-service"],
     labels=["kuberay"],
     links=[link("http://localhost:18265", "Nemotron Parse Ray Dashboard")],
+)
+
+# Nemotron Parse Warmup — sends 48 concurrent dummy requests to pre-heat
+# CUDA kernels, flash-attention JIT, and image processor on all 16 replicas.
+# Runs in parallel with MiniMax weight loading so replicas are hot when the
+# research pipeline first calls OCR.
+k8s_yaml("manifests/nemotron-warmup-job.yaml")
+k8s_resource(
+    "nemotron-warmup",
+    resource_deps=["nemotron-parse-service", "model-sync-scripts"],
+    labels=["kuberay"],
 )
 
 # ░█▀█░█▀█░█▀▀░█▀█░█░█░█▀▀░█▀▄░█░█░▀█▀
@@ -603,6 +677,7 @@ local_resource(
         "openwebui-pipelines",
         "minimax-service",
         "nemotron-parse-service",
+        "nemotron-warmup",
         "llm-gateway",
         "grafana-dashboards",
         "mcp-arxiv-search",

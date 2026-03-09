@@ -4,8 +4,8 @@ Paper-to-Text MCP Server
 requirements: fastmcp>=3.0.0, httpx>=0.27.0, pypdfium2>=4.30.0, openai>=1.40.0, Pillow>=10.0.0, uvicorn>=0.30.0
 
 OCR academic papers: download PDF → render pages to PNG → OCR with Nemotron Parse.
-Pages are sent to OCR in batches of PAGE_BATCH_SIZE (default 5) to avoid
-overwhelming the Nemotron Parse endpoint.
+All papers render in parallel (ProcessPoolExecutor) and all pages fire OCR
+concurrently across 16 Nemotron Parse replicas (MIG-partitioned GPUs).
 
 Tools:
   - read_papers:       Batch-process multiple papers (PDF → images → OCR)
@@ -20,13 +20,23 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import logging
 import os
+import time
+from concurrent.futures import ProcessPoolExecutor
 
 from fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
 from common import BearerAuthMiddleware
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [paper-to-text] %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("paper-to-text")
 
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -35,8 +45,28 @@ NEMOTRON_API_URL = os.environ.get(
     "NEMOTRON_PARSE_API_URL",
     "http://nemotron-parse-svc.default.svc.cluster.local:8000/v1",
 )
-PAGE_BATCH_SIZE = int(os.environ.get("PAGE_BATCH_SIZE", "5"))
-MAX_PAGES_DEFAULT = int(os.environ.get("MAX_PAGES_PER_PAPER", "6"))
+MAX_PAGES_DEFAULT = int(os.environ.get("MAX_PAGES_PER_PAPER", "30"))
+
+# Shared OpenAI client — single connection pool for ALL papers and pages.
+# Avoids per-paper client creation overhead and enables connection reuse
+# across concurrent OCR requests, maximising burst throughput.
+# httpx default pool is 100 connections; bump to 256 so 240 concurrent
+# OCR pages (8 papers × 30 pages) never block on connection acquisition.
+import openai as _openai_mod
+import httpx as _httpx_mod
+
+_parse_client = _openai_mod.AsyncOpenAI(
+    base_url=NEMOTRON_API_URL,
+    api_key="placeholder",
+    max_retries=2,
+    timeout=300.0,
+    http_client=_httpx_mod.AsyncClient(
+        limits=_httpx_mod.Limits(
+            max_connections=256,
+            max_keepalive_connections=64,
+        ),
+    ),
+)
 
 
 # ── MCP Server ───────────────────────────────────────────────────────────────
@@ -87,13 +117,16 @@ async def read_papers(papers: list[dict]) -> str:
         pdf_url = paper.get("pdf_url", "")
         max_pages = min(int(paper.get("max_pages", MAX_PAGES_DEFAULT)), 30)
         if not pdf_url:
+            log.warning("[%s] No PDF URL provided", title)
             return f"## {title}\n\n[Error: No PDF URL provided]\n"
         try:
             text = await _process_single_paper(title, pdf_url, max_pages)
             return f"## {title}\n\n{text}\n"
         except Exception as exc:
+            log.error("[%s] Failed: %s", title, exc, exc_info=True)
             return f"## {title}\n\n[Error: {exc}]\n"
 
+    log.info("read_papers called with %d papers", len(papers))
     results = await asyncio.gather(*[_process_or_error(p) for p in papers])
     return "\n\n---\n\n".join(results)
 
@@ -122,6 +155,7 @@ async def read_single_paper(
     try:
         return await _process_single_paper(title, pdf_url, max_pages)
     except Exception as exc:
+        log.error("[%s] read_single_paper failed: %s", title, exc, exc_info=True)
         return f"[Error processing '{title}': {exc}]"
 
 
@@ -133,31 +167,52 @@ async def _process_single_paper(
     max_pages: int,
 ) -> str:
     import httpx
-    import openai
 
     # 1. Download PDF
+    log.info("[%s] Downloading PDF from %s", title, pdf_url)
+    t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as http:
         resp = await http.get(pdf_url)
         resp.raise_for_status()
         pdf_bytes = resp.content
+    dl_time = time.monotonic() - t0
+    content_type = resp.headers.get("content-type", "unknown")
+    log.info(
+        "[%s] Downloaded %d bytes in %.1fs (status=%d, content-type=%s)",
+        title, len(pdf_bytes), dl_time, resp.status_code, content_type,
+    )
+    # Detect HTML responses (arXiv rate-limit pages)
+    if b"<!DOCTYPE" in pdf_bytes[:200] or b"<html" in pdf_bytes[:200]:
+        snippet = pdf_bytes[:500].decode("utf-8", errors="replace")
+        log.error(
+            "[%s] Received HTML instead of PDF — likely rate-limited. First 500 bytes: %s",
+            title, snippet,
+        )
+        raise ValueError(
+            f"Received HTML instead of PDF from {pdf_url} "
+            f"(status={resp.status_code}, content-type={content_type}). "
+            f"The server may be rate-limiting requests."
+        )
 
     # 2. Render pages to PNG (sync — run in executor)
+    log.info("[%s] Rendering PDF pages (max_pages=%d)", title, max_pages)
+    t1 = time.monotonic()
     loop = asyncio.get_event_loop()
     page_images = await loop.run_in_executor(
-        None, _render_pdf_pages, pdf_bytes, max_pages,
+        _pdfium_executor, _render_pdf_pages, pdf_bytes, max_pages,
     )
+    render_time = time.monotonic() - t1
+    log.info("[%s] Rendered %d pages in %.1fs", title, len(page_images) if page_images else 0, render_time)
 
     if not page_images:
         return f"[Error: No pages rendered from '{title}']"
 
-    # 3. OCR all pages concurrently — the burst triggers Ray Serve autoscaling
-    parse_client = openai.AsyncOpenAI(
-        base_url=NEMOTRON_API_URL,
-        api_key="placeholder",
-    )
+    # 3. OCR all pages concurrently across 16 Nemotron Parse replicas
 
-    async def ocr_page(b64_img: str) -> str:
-        ocr_resp = await parse_client.chat.completions.create(
+    async def ocr_page(page_idx: int, b64_img: str) -> str:
+        log.info("[%s] OCR page %d (%d KB)", title, page_idx + 1, len(b64_img) // 1024)
+        t_ocr = time.monotonic()
+        ocr_resp = await _parse_client.chat.completions.create(
             model="nvidia/NVIDIA-Nemotron-Parse-v1.2",
             messages=[{
                 "role": "user",
@@ -185,25 +240,47 @@ async def _process_single_paper(
                 "skip_special_tokens": False,
             },
         )
-        return ocr_resp.choices[0].message.content or ""
+        text = ocr_resp.choices[0].message.content or ""
+        log.info("[%s] OCR page %d done in %.1fs (%d chars)", title, page_idx + 1, time.monotonic() - t_ocr, len(text))
+        return text
 
     # Fire all pages concurrently — no batching, maximum burst
-    tasks = [asyncio.ensure_future(ocr_page(img)) for img in page_images]
+    log.info("[%s] Starting OCR on %d pages", title, len(page_images))
+    t2 = time.monotonic()
+    tasks = [asyncio.ensure_future(ocr_page(i, img)) for i, img in enumerate(page_images)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     page_texts: list[str] = []
     for i, r in enumerate(results):
         if isinstance(r, Exception):
+            log.error("[%s] OCR page %d failed: %s", title, i + 1, r)
             page_texts.append(f"[OCR failed on page {i + 1}: {r}]")
         else:
             page_texts.append(r)
+
+    total_chars = sum(len(t) for t in page_texts)
+    log.info(
+        "[%s] OCR complete: %d pages, %d total chars, %.1fs",
+        title, len(page_images), total_chars, time.monotonic() - t2,
+    )
 
     full_text = "\n\n---\n\n".join(page_texts)
     return f"Full text of '{title}' ({len(page_images)} pages):\n\n{full_text}"
 
 
+# PDFium is NOT thread-safe — concurrent PdfDocument() calls from multiple
+# threads corrupt the C library's internal state.  Use a ProcessPoolExecutor
+# so each worker gets its own process (and therefore its own copy of the C
+# library), enabling TRUE parallel rendering without thread-safety issues.
+_pdfium_executor = ProcessPoolExecutor(max_workers=4, max_tasks_per_child=50)
+
+
 def _render_pdf_pages(pdf_bytes: bytes, max_pages: int) -> list[str]:
-    """Render PDF pages to base64-encoded PNG images (sync)."""
+    """Render PDF pages to base64-encoded PNG images (sync).
+
+    Runs in a separate *process* via ProcessPoolExecutor, so each call has
+    its own copy of the PDFium C library — no thread-safety concerns.
+    """
     import pypdfium2 as pdfium
 
     doc = pdfium.PdfDocument(pdf_bytes)
