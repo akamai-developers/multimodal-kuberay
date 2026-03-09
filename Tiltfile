@@ -333,8 +333,7 @@ k8s_resource(
 # ░█▀▄░█▀▀░▀▀█░█▀▀░█▀█░█▀▄░█░░░█▀█░░░█▀▀░░█░░█▀▀░█▀▀░█░░░░█░░█░█░█▀▀
 # ░▀░▀░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀░▀░▀▀▀░▀░▀░░░▀░░░▀▀▀░▀░░░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀▀▀
 
-# Research Pipeline ConfigMap — auto-updates when any serve/*.py pipeline changes
-research_pipeline_code = str(read_file("serve/research_pipeline.py"))
+# Research Pipeline ConfigMap — auto-updates when serve/mcp_research_pipeline.py changes
 mcp_pipeline_code = str(read_file("serve/mcp_research_pipeline.py"))
 k8s_yaml(encode_yaml({
     "apiVersion": "v1",
@@ -344,7 +343,6 @@ k8s_yaml(encode_yaml({
         "namespace": "default",
     },
     "data": {
-        "research_pipeline.py": research_pipeline_code,
         "mcp_research_pipeline.py": mcp_pipeline_code,
     },
 }))

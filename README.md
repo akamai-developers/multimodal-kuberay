@@ -543,8 +543,7 @@ multimodal-kuberay/
 │   ├── arxiv_search_server.py      # FastMCP server: search_arxiv, get_paper_info
 │   └── paper_to_text_server.py     # FastMCP server: read_papers, read_single_paper
 ├── serve/
-│   ├── mcp_research_pipeline.py    # Deep research agent (MCP-based, primary pipeline)
-│   └── research_pipeline.py        # Direct research pipeline (legacy, not used)
+│   └── mcp_research_pipeline.py    # Deep research agent (MCP-based pipeline)
 ├── scripts/
 │   ├── model-sync.sh               # s5cmd-based Object Storage model downloader
 │   ├── model-upload.sh             # HuggingFace → Object Storage caching

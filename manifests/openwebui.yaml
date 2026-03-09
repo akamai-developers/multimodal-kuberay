@@ -50,7 +50,7 @@ spec:
             - name: OPENAI_API_KEYS
               value: "test_token;test_token"
             - name: DEFAULT_MODELS
-              value: "minimax-m2.5"
+              value: "mcp_research_pipeline"
             # ── Auto-create admin account on first boot ───────────────────
             # Skips the registration page entirely — credentials injected
             # from the openwebui-secret (sourced from .env via Tiltfile).
@@ -156,7 +156,7 @@ spec:
 ---
 # ─────────────────────────────────────────────────────────────────────────────
 # OpenWebUI Pipelines — hosts the deep-research pipeline Python module.
-# The ConfigMap (created by Tiltfile from serve/research_pipeline.py) is
+# The ConfigMap (created by Tiltfile from serve/mcp_research_pipeline.py) is
 # mounted into PIPELINES_DIR so the server auto-loads it on startup.
 # ─────────────────────────────────────────────────────────────────────────────
 apiVersion: apps/v1
