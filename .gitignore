@@ -7,3 +7,4 @@ kubeconfig
 *kubeconfig
 .envrc
 *.tfstate
+.DS_Store
