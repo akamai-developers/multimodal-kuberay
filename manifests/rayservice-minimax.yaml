@@ -23,7 +23,7 @@ spec:
       port: 8265
       targetPort: 8265
       protocol: TCP
-  type: LoadBalancer
+  type: ClusterIP
 ---
 apiVersion: ray.io/v1
 kind: RayService

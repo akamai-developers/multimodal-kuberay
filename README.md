@@ -4,7 +4,7 @@ Deploy a GPU-accelerated deep research agent on Linode Kubernetes Engine with MC
 
 ## Overview
 
-This repository demonstrates how to deploy a production-ready deep research agent using KubeRay on Linode Kubernetes Engine (LKE). A user asks a research question and the system autonomously searches arXiv, reads full papers via OCR, and synthesizes a comprehensive research report — all streamed in real time through OpenWebUI or a standard API endpoint.
+This repository demonstrates how to deploy a production-ready deep research agent using KubeRay on Linode Kubernetes Engine (LKE). A user asks a research question and the system autonomously searches arXiv, reads full papers via OCR, and synthesizes a comprehensive research report — all streamed in real time through OpenWebUI or a standard OpenAI-compatible API, both accessed via a shared Envoy Gateway.
 
 **Learning Objectives**: Orchestrate GPU workloads on Kubernetes, serve LLMs with Ray Serve, wire up MCP tool servers, configure NVIDIA MIG partitioning, and set up secure API gateways.
 
@@ -19,6 +19,7 @@ This repository demonstrates how to deploy a production-ready deep research agen
 - 🔬 **Deep research pipeline** — Two-phase MCP agent: search & select papers → OCR & synthesize report
 - 🛠️ **MCP tool servers** — ArXiv search and PDF-to-text OCR via FastMCP (Streamable HTTP transport)
 - 🚀 **OpenAI-compatible API** — Standard `/v1/chat/completions` endpoint via Envoy Gateway
+- 🌐 **Unified Gateway** — Single LoadBalancer for both OpenWebUI (`/openwebui/*`) and API (`/v1/*`) traffic with path-based routing
 - 🎮 **GPU-accelerated inference** — NVIDIA Blackwell GPUs with MIG partitioning (8× RTX PRO 6000)
 - 🧩 **NVIDIA MIG** — Multi-Instance GPU splits 4 physical GPUs into 16 isolated 24 GB instances
 - 🔧 **Infrastructure-as-Code** — Terraform for cluster provisioning, Tilt for deployment orchestration
@@ -40,8 +41,8 @@ graph TB
     end
 
     subgraph Gateway["Envoy Gateway"]
-        GW["llm-gateway<br/>LoadBalancer :80"]
-        Auth["SecurityPolicy<br/>Bearer Token Auth"]
+        GW["llm-gateway<br/>LoadBalancer :80<br/>/openwebui/* → OpenWebUI (rewrite: /)<br/>/v1/* → MiniMax"]
+        Auth["SecurityPolicy<br/>API: Bearer Token Auth<br/>OpenWebUI: Allow All"]
         GW --> Auth
     end
 
@@ -78,8 +79,9 @@ graph TB
         ObjStore["Akamai Object Storage<br/>model-cache bucket"]
     end
 
-    User --> WebUI
+    User --> GW
     API --> GW
+    GW --> WebUI
     GW --> MMHead
     Pipelines --> ArXiv
     Pipelines --> PaperOCR
@@ -141,10 +143,10 @@ graph LR
 
 **GPU allocation summary**:
 
-| Node | GPUs | MIG | Model | Workers |
-|------|------|-----|-------|---------|
-| 4-GPU node | 4× RTX PRO 6000 (96 GB each) | Disabled | MiniMax M2.5 (TP=4) | 1 worker pod |
-| 2-GPU node × 2 | 2× RTX PRO 6000 each | 4× 1g.24gb per GPU | Nemotron Parse v1.2 | 8 worker pods per node (16 total) |
+| Node           | GPUs                         | MIG                | Model               | Workers                           |
+|----------------|------------------------------|--------------------|---------------------|-----------------------------------|
+| 4-GPU node     | 4× RTX PRO 6000 (96 GB each) | Disabled           | MiniMax M2.5 (TP=4) | 1 worker pod                      |
+| 2-GPU node × 2 | 2× RTX PRO 6000 each         | 4× 1g.24gb per GPU | Nemotron Parse v1.2 | 8 worker pods per node (16 total) |
 
 ### Deep Research Pipeline
 
@@ -213,17 +215,18 @@ sequenceDiagram
 - **OpenWebUI** — Chat interface with persistent storage and custom branding
 - **Pipelines Server** — Hosts the MCP research pipeline, exposes it as a selectable model in OpenWebUI
 - **MCP Servers** — FastMCP-based tool servers (ArXiv search, Paper-to-Text OCR)
-- **Envoy Gateway** — API gateway with Bearer token authentication and routing
+- **Envoy Gateway** — Unified API gateway routing both OpenWebUI (`/openwebui/*`) and API (`/v1/*`) traffic with path-based routing and flexible authentication (Bearer token for API, allow-all for OpenWebUI's built-in auth)
 - **Kueue** — Workload queue management for GPU resources
 - **kube-prometheus-stack** — Prometheus + Grafana with Ray-specific dashboards
 - **Tilt** — Live development environment with automatic reloading
 
 **Request Flow** (Deep Research Pipeline):
-1. User submits a research question via OpenWebUI or the Gateway API
-2. OpenWebUI routes to the Pipelines server, which runs the MCP research pipeline
-3. **Phase 1 — Search & Select**: MiniMax M2.5 calls the ArXiv MCP server to search for and select 6-8 relevant papers
-4. **Phase 2 — Read & Synthesize**: MiniMax M2.5 calls the Paper-to-Text MCP server, which downloads PDFs, renders pages to PNG, and OCRs all pages concurrently through 16 Nemotron Parse replicas, then writes a comprehensive report with inline citations
-5. The report streams back token-by-token to the user
+1. User submits a research question via OpenWebUI (at `http://<gateway>/openwebui/`) or directly via the Gateway API (at `http://<gateway>/v1/chat/completions`)
+2. Gateway routes OpenWebUI traffic to the web interface; API traffic to MiniMax M2.5
+3. OpenWebUI routes to the Pipelines server, which runs the MCP research pipeline
+4. **Phase 1 — Search & Select**: MiniMax M2.5 calls the ArXiv MCP server to search for and select 6-8 relevant papers
+5. **Phase 2 — Read & Synthesize**: MiniMax M2.5 calls the Paper-to-Text MCP server, which downloads PDFs, renders pages to PNG, and OCRs all pages concurrently through 16 Nemotron Parse replicas, then writes a comprehensive report with inline citations
+6. The report streams back token-by-token through the Gateway to the user
 
 ## Prerequisites
 
@@ -276,29 +279,29 @@ Once complete, access the Tilt UI at http://localhost:10350 to monitor deploymen
 
 ### Terraform Variables (`terraform.tfvars`)
 
-| Variable             | Description                  | Default                              | Options/Notes                                                                                               |
-|----------------------|------------------------------|--------------------------------------|-------------------------------------------------------------------------------------------------------------|
-| `linode_token`       | Linode API token             | (required)                           | Generate from Cloud Manager                                                                                 |
-| `cluster_label`      | Cluster name                 | `"myllm"`                            | Any descriptive string                                                                                      |
-| `region`             | Linode region                | `"us-lax"`                           | [Available regions](https://www.linode.com/docs/products/platform/get-started/guides/choose-a-data-center/) |
-| `kubernetes_version` | Kubernetes version           | `"1.34"`                             | Check LKE supported versions                                                                                |
-| `gpu_big_node_type`  | Large GPU node type (MiniMax)| `"g3-gpu-rtxpro6000-blackwell-4"`    | 4× Blackwell GPUs — hosts MiniMax M2.5                                                                     |
-| `gpu_big_node_count` | Number of large GPU nodes    | `1`                                  | 1 node for the MoE model                                                                                   |
-| `gpu_node_type`      | Small GPU node type (OCR)    | `"g3-gpu-rtxpro6000-blackwell-2"`    | 2× Blackwell GPUs — MIG-partitioned for Nemotron Parse (8 instances/node)        |
-| `gpu_node_count`     | Number of small GPU nodes    | `2`                                  | 2 nodes × 8 MIG instances = 16 OCR replicas                                     |
-| `tags`               | Resource tags                | `["kuberay", "llm", "gpu"]`          | For organization and tracking                                                                               |
+| Variable             | Description                   | Default                           | Options/Notes                                                                                               |
+|----------------------|-------------------------------|-----------------------------------|-------------------------------------------------------------------------------------------------------------|
+| `linode_token`       | Linode API token              | (required)                        | Generate from Cloud Manager                                                                                 |
+| `cluster_label`      | Cluster name                  | `"myllm"`                         | Any descriptive string                                                                                      |
+| `region`             | Linode region                 | `"us-lax"`                        | [Available regions](https://www.linode.com/docs/products/platform/get-started/guides/choose-a-data-center/) |
+| `kubernetes_version` | Kubernetes version            | `"1.34"`                          | Check LKE supported versions                                                                                |
+| `gpu_big_node_type`  | Large GPU node type (MiniMax) | `"g3-gpu-rtxpro6000-blackwell-4"` | 4× Blackwell GPUs — hosts MiniMax M2.5                                                                      |
+| `gpu_big_node_count` | Number of large GPU nodes     | `1`                               | 1 node for the MoE model                                                                                    |
+| `gpu_node_type`      | Small GPU node type (OCR)     | `"g3-gpu-rtxpro6000-blackwell-2"` | 2× Blackwell GPUs — MIG-partitioned for Nemotron Parse (8 instances/node)                                   |
+| `gpu_node_count`     | Number of small GPU nodes     | `2`                               | 2 nodes × 8 MIG instances = 16 OCR replicas                                                                 |
+| `tags`               | Resource tags                 | `["kuberay", "llm", "gpu"]`       | For organization and tracking                                                                               |
 
 ### Environment Variables (`.env`)
 
-| Variable               | Required | Description                                              |
-|------------------------|----------|----------------------------------------------------------|
-| `HUGGINGFACE_TOKEN`    | Yes      | HuggingFace access token for model downloads             |
-| `OPENAI_API_KEY`       | Yes      | Arbitrary secret for API authentication (Bearer token)   |
-| `OBJ_ACCESS_KEY`       | Yes      | Akamai Object Storage access key                         |
-| `OBJ_SECRET_KEY`       | Yes      | Akamai Object Storage secret key                         |
-| `OBJ_ENDPOINT_HOSTNAME`| Yes     | Object Storage endpoint (e.g. `us-ord-1.linodeobjects.com`) |
-| `OBJ_REGION`           | Yes      | Object Storage region (e.g. `us-ord-1`)                  |
-| `MODEL_BUCKET`         | No       | Bucket name for cached model weights (default: `model-cache`) |
+| Variable                | Required | Description                                                   |
+|-------------------------|----------|---------------------------------------------------------------|
+| `HUGGINGFACE_TOKEN`     | Yes      | HuggingFace access token for model downloads                  |
+| `OPENAI_API_KEY`        | Yes      | Arbitrary secret for API authentication (Bearer token)        |
+| `OBJ_ACCESS_KEY`        | Yes      | Akamai Object Storage access key                              |
+| `OBJ_SECRET_KEY`        | Yes      | Akamai Object Storage secret key                              |
+| `OBJ_ENDPOINT_HOSTNAME` | Yes      | Object Storage endpoint (e.g. `us-ord-1.linodeobjects.com`)   |
+| `OBJ_REGION`            | Yes      | Object Storage region (e.g. `us-ord-1`)                       |
+| `MODEL_BUCKET`          | No       | Bucket name for cached model weights (default: `model-cache`) |
 
 ### Model Configuration
 
@@ -325,9 +328,9 @@ Once complete, access the Tilt UI at http://localhost:10350 to monitor deploymen
 
 ### MCP Tool Servers
 
-| Server | Endpoint | Tools | Description |
-|--------|----------|-------|-------------|
-| ArXiv Search | `http://mcp-arxiv-search-svc:8000/mcp` | `search_arxiv`, `get_paper_info` | Search arXiv by query, retrieve paper metadata |
+| Server        | Endpoint                                | Tools                              | Description                                         |
+|---------------|-----------------------------------------|------------------------------------|-----------------------------------------------------|
+| ArXiv Search  | `http://mcp-arxiv-search-svc:8000/mcp`  | `search_arxiv`, `get_paper_info`   | Search arXiv by query, retrieve paper metadata      |
 | Paper-to-Text | `http://mcp-paper-to-text-svc:8000/mcp` | `read_papers`, `read_single_paper` | Download PDFs, render pages, OCR via Nemotron Parse |
 
 Both servers use FastMCP with Streamable HTTP transport and Bearer token authentication.
@@ -341,8 +344,10 @@ Once deployed, the following services are available:
 - **Tilt Dashboard**: http://localhost:10350  
   Monitor deployment status, view logs, and manage resources
 
-- **OpenWebUI**: `kubectl get svc openwebui-svc` for the external LoadBalancer IP  
-  Chat interface — select "MiniMax M2.5" for direct chat or "Deep Research Agent" for the research pipeline
+- **OpenWebUI**: Access via Gateway at `http://<GATEWAY_IP>/openwebui/`  
+  Get the Gateway IP: `kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}'`  
+  Chat interface — select "MiniMax M2.5" for direct chat or "Deep Research Agent" for the research pipeline  
+  Note: OpenWebUI has its own authentication (username/password), no API key required
 
 - **MiniMax Ray Dashboard**: http://localhost:8265 (via Tilt port-forward)  
   View cluster metrics, task execution, and resource utilization
@@ -356,8 +361,9 @@ Once deployed, the following services are available:
 - **Grafana**: http://localhost:3000 (via Tilt port-forward)  
   Pre-configured Ray dashboards for model cache, serve deployments, and LLM metrics
 
-- **Gateway API**: `kubectl get gateway llm-gateway` for the external LoadBalancer IP  
-  OpenAI-compatible API with Bearer token authentication
+- **Gateway API**: Access via Gateway at `http://<GATEWAY_IP>/v1/chat/completions`  
+  Get the Gateway IP: `kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}'`  
+  OpenAI-compatible API with Bearer token authentication (use `OPENAI_API_KEY` from `.env`)
 
 ### Making API Requests
 
@@ -373,6 +379,24 @@ make test-research
 # Custom research topic
 ./scripts/test-pipeline.sh "attention mechanisms in transformers"
 ```
+
+#### Accessing OpenWebUI
+
+**Via Gateway (recommended)**:
+```bash
+# 1. Get the Gateway service IP
+export GATEWAY_IP=$(kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}')
+
+# 2. Open OpenWebUI in your browser
+echo "OpenWebUI: http://${GATEWAY_IP}/openwebui/"
+# Navigate to the URL and sign up/sign in (OpenWebUI creates an admin account on first run)
+
+# 3. Select a model in the UI:
+#    - "MiniMax M2.5" for direct chat
+#    - "Deep Research Agent" for the full research pipeline
+```
+
+**Note**: OpenWebUI uses its own authentication system (username/password), separate from the API Bearer token.
 
 #### Manual API Requests
 
@@ -412,7 +436,9 @@ curl --no-buffer \
   }'
 ```
 
-**Authentication**: Replace `${OPENAI_API_KEY}` with the value you set in your `.env` file.
+**Authentication Notes**:
+- **API Endpoints** (`/v1/*`): Require Bearer token authentication. Use `Authorization: Bearer ${OPENAI_API_KEY}` header with the value from your `.env` file.
+- **OpenWebUI** (`/openwebui/`): Uses built-in username/password authentication. No API key required. Create an admin account on first access.
 
 ### Monitoring Deployment Status
 
@@ -581,8 +607,17 @@ make up
 kubectl get gateway llm-gateway
 kubectl describe gateway llm-gateway
 
-# Verify HTTPRoute is configured
+# Verify both HTTPRoutes are configured (API + OpenWebUI)
 kubectl get httproute llm-route
+kubectl get httproute openwebui-route
+
+# Check SecurityPolicies
+kubectl get securitypolicy llm-gateway-auth
+kubectl get securitypolicy openwebui-route-auth
+
+# Test Gateway routing
+export GATEWAY_IP=$(kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}')
+curl -I http://${GATEWAY_IP}/openwebui/  # Should return OpenWebUI (200 or 30x redirect)
 ```
 
 **Authentication failures (401 Unauthorized)**
