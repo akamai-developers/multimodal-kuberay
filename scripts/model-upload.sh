@@ -32,7 +32,7 @@ OBJ_ENDPOINT="https://${OBJ_ENDPOINT_HOSTNAME}"
 echo "Ensuring bucket ${MODEL_BUCKET} exists..."
 python3 - <<'PYEOF'
 import os, boto3, botocore
-s3 = boto3.client("s3",
+obj = boto3.client("s3",
     endpoint_url="https://" + os.environ["OBJ_ENDPOINT_HOSTNAME"],
     aws_access_key_id=os.environ["OBJ_ACCESS_KEY"],
     aws_secret_access_key=os.environ["OBJ_SECRET_KEY"],
@@ -41,7 +41,7 @@ s3 = boto3.client("s3",
 )
 bucket = os.environ["MODEL_BUCKET"]
 try:
-    s3.head_bucket(Bucket=bucket)
+    obj.head_bucket(Bucket=bucket)
     print(f"Bucket {bucket} exists.")
 except botocore.exceptions.ClientError as e:
     code = int(e.response["Error"].get("Code", 0))
@@ -50,7 +50,7 @@ except botocore.exceptions.ClientError as e:
         # Linode Object Storage ignores LocationConstraint — region
         # is determined by the endpoint URL, so create without it.
         try:
-            s3.create_bucket(Bucket=bucket)
+            obj.create_bucket(Bucket=bucket)
         except botocore.exceptions.ClientError as e2:
             if "BucketAlreadyOwnedByYou" in str(e2):
                 pass
@@ -63,38 +63,38 @@ PYEOF
 
 upload_model() {
   local hf_repo="$1"
-  local s3_prefix="$2"
+  local obj_prefix="$2"
   local file_count
   file_count=$(s5cmd --endpoint-url "$OBJ_ENDPOINT" \
-    ls "s3://${MODEL_BUCKET}/${s3_prefix}/*" 2>/dev/null | wc -l) || file_count=0
+    ls "s3://${MODEL_BUCKET}/${obj_prefix}/*" 2>/dev/null | wc -l) || file_count=0
   if [ "$file_count" -gt 5 ]; then
     echo "[$(date -u +%H:%M:%S)] SKIP ${hf_repo} already cached (${file_count} files)"
     return 0
   fi
   local model_start=$(date +%s)
   echo "[$(date -u +%H:%M:%S)] DOWNLOADING ${hf_repo} from HuggingFace..."
-  python3 -c "import os,sys;from huggingface_hub import snapshot_download;snapshot_download(sys.argv[1],local_dir=sys.argv[2],token=os.environ.get('HUGGING_FACE_HUB_TOKEN'));print('Downloaded '+sys.argv[1])" "${hf_repo}" "/staging/${s3_prefix}"
+  python3 -c "import os,sys;from huggingface_hub import snapshot_download;snapshot_download(sys.argv[1],local_dir=sys.argv[2],token=os.environ.get('HUGGING_FACE_HUB_TOKEN'));print('Downloaded '+sys.argv[1])" "${hf_repo}" "/staging/${obj_prefix}"
   local dl_end=$(date +%s)
   # Remove HuggingFace cache metadata — these are small .metadata files
   # that bloat the bucket and slow down downstream model-sync downloads.
-  rm -rf "/staging/${s3_prefix}/.cache"
+  rm -rf "/staging/${obj_prefix}/.cache"
   local dl_elapsed=$((dl_end - model_start))
   local dl_size_kb
-  dl_size_kb=$(du -sk "/staging/${s3_prefix}" | awk '{print $1}')
+  dl_size_kb=$(du -sk "/staging/${obj_prefix}" | awk '{print $1}')
   local dl_size_mb=$((dl_size_kb / 1024))
   local dl_speed_mbs=0
   if [ "$dl_elapsed" -gt 0 ]; then
     dl_speed_mbs=$((dl_size_mb / dl_elapsed))
   fi
-  echo "[$(date -u +%H:%M:%S)] HF download: ${dl_size_mb} MB in ${dl_elapsed}s (${dl_speed_mbs} MB/s). UPLOADING to ${MODEL_BUCKET}/${s3_prefix}..."
-  s5cmd --endpoint-url "$OBJ_ENDPOINT" sync "/staging/${s3_prefix}/*" "s3://${MODEL_BUCKET}/${s3_prefix}/"
+  echo "[$(date -u +%H:%M:%S)] HF download: ${dl_size_mb} MB in ${dl_elapsed}s (${dl_speed_mbs} MB/s). UPLOADING to ${MODEL_BUCKET}/${obj_prefix}..."
+  s5cmd --endpoint-url "$OBJ_ENDPOINT" sync "/staging/${obj_prefix}/*" "s3://${MODEL_BUCKET}/${obj_prefix}/"
   local upload_end=$(date +%s)
   local upload_elapsed=$((upload_end - dl_end))
   local upload_speed_mbs=0
   if [ "$upload_elapsed" -gt 0 ]; then
     upload_speed_mbs=$((dl_size_mb / upload_elapsed))
   fi
-  rm -rf "/staging/${s3_prefix}"
+  rm -rf "/staging/${obj_prefix}"
   echo "[$(date -u +%H:%M:%S)] DONE ${hf_repo} (${dl_size_mb} MB) — download: ${dl_elapsed}s @ ${dl_speed_mbs} MB/s, upload: ${upload_elapsed}s @ ${upload_speed_mbs} MB/s, total: $((upload_end - model_start))s"
 }
 

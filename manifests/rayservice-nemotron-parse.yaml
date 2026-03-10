@@ -174,7 +174,7 @@ spec:
                           values: ["all-1g.24gb"]
 
             initContainers:
-              # Download model from S3 + pre-warm pip cache in parallel.
+              # Download model from Linode Object Storage + pre-warm pip cache in parallel.
               # The runtime_env pip install runs when Ray creates the Serve
               # replica, but with wheels already in the cache it completes
               # in seconds instead of minutes.
