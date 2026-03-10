@@ -124,24 +124,24 @@ down:
 			| python3 -c "import json,sys; annots=json.load(sys.stdin)['metadata'].get('annotations',{}); print(' '.join(k+'-' for k in annots if k.startswith('nvidia.com/')))" 2>/dev/null) 2>/dev/null || true; \
 	done; \
 	echo "Deleting Tilt-created namespaces..."; \
-	for ns in gpu-operator envoy-gateway-system kueue-system; do \
+	for ns in gpu-operator envoy-gateway-system; do \
 		KUBECONFIG=$$KC kubectl delete ns $$ns --ignore-not-found --wait=false; \
 	done; \
 	echo "Cleaning up Tilt-installed CRDs..."; \
 	KUBECONFIG=$$KC kubectl get crd -o name 2>/dev/null \
-		| grep -E 'nvidia\.com|monitoring\.coreos\.com|envoyproxy\.io|gateway\.networking\.k8s\.io|kueue\.x-k8s\.io|ray\.io' \
+		| grep -E 'nvidia\.com|monitoring\.coreos\.com|envoyproxy\.io|gateway\.networking\.k8s\.io|ray\.io' \
 		| xargs -r KUBECONFIG=$$KC kubectl delete --ignore-not-found 2>/dev/null || true; \
 	echo "Removing stale webhook configurations..."; \
 	for wh in $$(KUBECONFIG=$$KC kubectl get mutatingwebhookconfigurations -o name 2>/dev/null \
-		| grep -E 'kueue|envoy|gpu-operator|nvidia'); do \
+		| grep -E 'envoy|gpu-operator|nvidia'); do \
 		KUBECONFIG=$$KC kubectl delete $$wh --ignore-not-found 2>/dev/null || true; \
 	done; \
 	for wh in $$(KUBECONFIG=$$KC kubectl get validatingwebhookconfigurations -o name 2>/dev/null \
-		| grep -E 'kueue|envoy|gpu-operator|nvidia'); do \
+		| grep -E 'envoy|gpu-operator|nvidia'); do \
 		KUBECONFIG=$$KC kubectl delete $$wh --ignore-not-found 2>/dev/null || true; \
 	done; \
 	echo "Waiting for namespace deletion..."; \
-	for ns in gpu-operator envoy-gateway-system kueue-system; do \
+	for ns in gpu-operator envoy-gateway-system; do \
 		KUBECONFIG=$$KC kubectl wait --for=delete ns/$$ns --timeout=60s 2>/dev/null || true; \
 	done; \
 	echo ""; \

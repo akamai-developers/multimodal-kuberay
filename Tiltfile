@@ -50,7 +50,6 @@ model_bucket = os.getenv("MODEL_BUCKET", "model-cache")
 nvidia_gpu_operator_version = os.getenv("NVIDIA_GPU_OPERATOR_VERSION", "v25.10.0")
 kuberay_operator_version = os.getenv("KUBERAY_OPERATOR_VERSION", "1.5.1")
 envoy_gateway_version = os.getenv("ENVOY_GATEWAY_VERSION", "v1.7.0")
-kueue_version = os.getenv("KUEUE_VERSION", "0.16.1")
 
 # Validate required environment variables (skip during teardown)
 _required_vars = {
@@ -82,7 +81,7 @@ helm_resource(
     "gpu-operator",
     "gpu-operator-repo/gpu-operator",
     namespace="gpu-operator",
-    resource_deps=["gpu-operator-repo", "kueue"],
+    resource_deps=["gpu-operator-repo"],
     flags=[
         "--create-namespace",
         "--version=%s" % nvidia_gpu_operator_version,
@@ -185,7 +184,6 @@ helm_resource(
     "envoy-gateway",
     "oci://docker.io/envoyproxy/gateway-helm",
     namespace="envoy-gateway-system",
-    resource_deps=["kueue"],
     flags=[
         "--create-namespace",
         "--version=%s" % envoy_gateway_version,
@@ -208,7 +206,7 @@ helm_resource(
     "kube-prometheus-stack",
     "prometheus-community/kube-prometheus-stack",
     namespace="kube-system",
-    resource_deps=["prometheus-community", "kueue"],
+    resource_deps=["prometheus-community"],
     flags=[
         "--values=./hack/monitoring-values.yaml",
         "--timeout=600s",
@@ -223,22 +221,7 @@ local_resource(
     links=[link("http://localhost:3000", "Grafana")],
 )
 
-# ░█░█░█░█░█▀▀░█░█░█▀▀
-# ░█▀▄░█░█░█▀▀░█░█░█▀▀
-# ░▀░▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀
 
-helm_resource(
-    "kueue",
-    "oci://registry.k8s.io/kueue/charts/kueue",
-    namespace="kueue-system",
-    flags=[
-        "--create-namespace",
-        "--version=%s" % kueue_version,
-        "--wait",
-        "--timeout=300s",
-    ],
-    labels=["kueue"],
-)
 
 # ░█▀▀░█▀▀░█▀▀░█▀▄░█▀▀░▀█▀░█▀▀
 # ░▀▀█░█▀▀░█░░░█▀▄░█▀▀░░█░░▀▀█
@@ -408,7 +391,7 @@ k8s_resource(
 k8s_yaml("manifests/model-upload-job.yaml")
 k8s_resource(
     "model-upload",
-    resource_deps=["hf-secret", "obj-store-secret", "model-upload-scripts", "kueue"],
+    resource_deps=["hf-secret", "obj-store-secret", "model-upload-scripts"],
     labels=["kuberay"],
 )
 
@@ -545,13 +528,13 @@ k8s_resource(
         "openwebui-route:httproute",
         "openwebui-route-auth:securitypolicy",
     ],
-    resource_deps=["openwebui-secret", "minimax-service", "kueue", "llm-gateway"],
+    resource_deps=["openwebui-secret", "minimax-service", "llm-gateway"],
     labels=["openwebui"],
 )
 
 k8s_resource(
     "openwebui-pipelines",
-    resource_deps=["research-pipeline-code", "openwebui-secret", "kueue"],
+    resource_deps=["research-pipeline-code", "openwebui-secret"],
     labels=["openwebui"],
 )
 
@@ -586,7 +569,7 @@ k8s_resource(
 k8s_yaml("manifests/mcp-arxiv-search.yaml")
 k8s_resource(
     "mcp-arxiv-search",
-    resource_deps=["mcp-arxiv-search-code", "openwebui-secret", "kueue"],
+    resource_deps=["mcp-arxiv-search-code", "openwebui-secret"],
     labels=["mcp"],
 )
 
@@ -614,7 +597,7 @@ k8s_resource(
 k8s_yaml("manifests/mcp-paper-to-text.yaml")
 k8s_resource(
     "mcp-paper-to-text",
-    resource_deps=["mcp-paper-to-text-code", "openwebui-secret", "nemotron-parse-service", "kueue"],
+    resource_deps=["mcp-paper-to-text-code", "openwebui-secret", "nemotron-parse-service"],
     labels=["mcp"],
 )
 

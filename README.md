@@ -71,7 +71,6 @@ graph TB
     subgraph Operators["Cluster Operators"]
         GPUOp["NVIDIA GPU Operator<br/>CDI · MIG Manager"]
         KubeRay["KubeRay Operator"]
-        Kueue["Kueue"]
         Prom["kube-prometheus-stack<br/>Grafana + Prometheus"]
     end
 
@@ -216,7 +215,6 @@ sequenceDiagram
 - **Pipelines Server** — Hosts the MCP research pipeline, exposes it as a selectable model in OpenWebUI
 - **MCP Servers** — FastMCP-based tool servers (ArXiv search, Paper-to-Text OCR)
 - **Envoy Gateway** — Unified API gateway routing both OpenWebUI (`/`) and API (`/v1/*`) traffic with path-based routing and flexible authentication (Bearer token for API, allow-all for OpenWebUI's built-in auth)
-- **Kueue** — Workload queue management for GPU resources
 - **kube-prometheus-stack** — Prometheus + Grafana with Ray-specific dashboards
 - **Tilt** — Live development environment with automatic reloading
 
@@ -268,7 +266,7 @@ make all
 
 # Expected timeline:
 # - Provision LKE cluster with GPU nodes: ~5-10 minutes
-# - Install operators (GPU, KubeRay, Envoy, Kueue): ~5 minutes
+# - Install operators (GPU, KubeRay, Envoy): ~5 minutes
 # - Upload models to Object Storage: ~10-15 minutes
 # - Deploy MiniMax M2.5 + Nemotron Parse + MCP servers: ~10-15 minutes
 ```
@@ -589,15 +587,6 @@ kubectl get nodes -l nvidia.com/mig.config -o jsonpath='{range .items[*]}{.metad
 # Check the model-upload job and worker init container logs:
 kubectl logs job/model-upload -f
 kubectl logs -l ray.io/node-type=worker -c model-download --tail=100 -f
-```
-
-**Kueue webhook errors on resource creation**
-```bash
-# If resources fail with "failed calling webhook", clean up stale webhooks:
-kubectl delete mutatingwebhookconfigurations -l app.kubernetes.io/name=kueue
-kubectl delete validatingwebhookconfigurations -l app.kubernetes.io/name=kueue
-# Then re-deploy:
-make up
 ```
 
 **Gateway not accessible**

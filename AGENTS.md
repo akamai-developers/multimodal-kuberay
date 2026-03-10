@@ -17,7 +17,6 @@ This document provides coding standards, workflows, and commands for AI agents w
 - NVIDIA GPU Operator (Blackwell/Ada GPUs)
 - KubeRay Operator + RayService (MiniMax M2.5 + Nemotron Parse v1.2)
 - Envoy Gateway (OpenAI-compatible API)
-- Kueue (workload queue management)
 
 ---
 
@@ -255,7 +254,6 @@ if not huggingface_token:
 labels=["nvidia"]    # GPU operator resources
 labels=["kuberay"]   # Ray-related resources
 labels=["gateway"]   # Gateway resources
-labels=["kueue"]     # Queue management
 ```
 
 **Dependencies**: Explicit resource_deps
@@ -303,7 +301,7 @@ Examples:
 - `hf-secret` (HuggingFace token secret)
 
 ### Namespace Strategy
-- **Operators**: Dedicated namespaces (`gpu-operator`, `envoy-gateway-system`, `kueue-system`)
+- **Operators**: Dedicated namespaces (`gpu-operator`, `envoy-gateway-system`)
 - **Applications**: `default` namespace (RayService, Gateway)
 
 ### Secret Management
