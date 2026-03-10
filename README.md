@@ -34,64 +34,53 @@ This repository demonstrates how to deploy a production-ready deep research agen
 ### System Overview
 
 ```mermaid
+---
+config:
+  flowchart:
+---
 graph TB
-    subgraph External["External Access"]
-        User["👤 User"]
-        API["API Client"]
-    end
-
-    subgraph Gateway["Envoy Gateway"]
-        GW["llm-gateway<br/>LoadBalancer :80<br/>/ → OpenWebUI<br/>/v1/* → MiniMax"]
-        Auth["SecurityPolicy<br/>API: Bearer Token Auth<br/>OpenWebUI: Allow All"]
-        GW --> Auth
-    end
-
-    subgraph UI["Chat Interface"]
-        WebUI["OpenWebUI<br/>+ Custom Branding"]
-        Pipelines["Pipelines Server<br/>:9099"]
-        WebUI --> Pipelines
-    end
-
-    subgraph MCP["MCP Tool Servers"]
-        ArXiv["ArXiv Search<br/>FastMCP :8000"]
-        PaperOCR["Paper-to-Text<br/>FastMCP :8000"]
-    end
-
-    subgraph Ray["Ray Serve Clusters"]
-        subgraph MiniMaxCluster["MiniMax M2.5 RayService"]
-            MMHead["Head Pod<br/>num-cpus=0"]
-            MMWorker["Worker Pod<br/>4× GPUs · TP=4"]
+    User["👤 User"]
+    API["API Client"]
+    subgraph KubernetesCluster["Linode Kubernetes Engine"]
+        GW["Envoy Gateway<br/>LoadBalancer IP"]
+        
+        subgraph OpenWebUI
+            WebUI["OpenWebUI"]
+            Pipelines["Pipelines Server<br/>:9099"]
         end
-        subgraph NemotronCluster["Nemotron Parse v1.2 RayService"]
-            NPHead["Head Pod<br/>num-cpus=0"]
-            NPWorkers["16× Worker Pods<br/>1 MIG GPU each"]
+
+
+        subgraph MCPServers["MCP Tool Servers"]
+            ArXiv["ArXiv Search<br/>FastMCP :8000"]
+            PaperOCR["Paper-to-Text<br/>FastMCP :8000"]
+        end
+
+        subgraph Ray["Ray Serve Clusters"]
+            MinimaxService[MiniMax M2.5 RayService 4x GPUs]
+            NemotronService[Nemotron Parse v1.2 RayService 16X MIG GPUs]
         end
     end
-
-    subgraph Operators["Cluster Operators"]
-        GPUOp["NVIDIA GPU Operator<br/>CDI · MIG Manager"]
-        KubeRay["KubeRay Operator"]
-        Prom["kube-prometheus-stack<br/>Grafana + Prometheus"]
+    
+    subgraph Storage["Akamai Object Storage"]
+        ObjStore["model-cache bucket"]
     end
 
-    subgraph Storage["Model Storage"]
-        ObjStore["Akamai Object Storage<br/>model-cache bucket"]
-    end
-
-    User --> GW
-    API --> GW
-    GW --> WebUI
-    GW --> MMHead
-    Pipelines --> ArXiv
-    Pipelines --> PaperOCR
-    PaperOCR --> NPHead
-    Pipelines --> MMHead
-    ArXiv -.->|"arXiv API"| ExternalArXiv["arXiv.org"]
-    ObjStore -.->|"s5cmd sync"| MMWorker
-    ObjStore -.->|"s5cmd sync"| NPWorkers
+    User -->|OpenWebUI access| GW
+    API -->|Direct API requests| GW
+    WebUI -->|Research requests| Pipelines
+    GW -->|Route /v1/*| MinimaxService
+    WebUI -->|Direct Model Access| MinimaxService
+    GW -->|Route /| WebUI
+    Pipelines -->|Search papers| ArXiv
+    Pipelines -->|Submit images| PaperOCR
+    PaperOCR -->|Parse images| NemotronService
+    Pipelines -->|LLM reasoning| MinimaxService
+    ArXiv -.->|Fetch papers| ExternalArXiv["arXiv.org"]
+    MinimaxService -.->|Pull Model weights| ObjStore
+    NemotronService -.->|Pull Model weights| ObjStore
 ```
 
-### GPU / MIG Topology
+### Node Topology & GPU Configuration
 
 Each physical GPU on the 2-GPU nodes is partitioned into 4× MIG instances using the `all-1g.24gb` profile (24 GB VRAM each). The GPU Operator's MIG Manager handles partitioning automatically via node labels. CDI (Container Device Interface) assigns each pod exactly one MIG instance as CUDA device 0 — no runtime patching needed.
 
