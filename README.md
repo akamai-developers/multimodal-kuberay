@@ -46,13 +46,13 @@ graph TB
         
         subgraph OpenWebUI
             WebUI["OpenWebUI"]
-            Pipelines["Pipelines Server<br/>:9099"]
+            Pipelines["Pipelines Server"]
         end
 
 
         subgraph MCPServers["MCP Tool Servers"]
-            ArXiv["ArXiv Search<br/>FastMCP :8000"]
-            PaperOCR["Paper-to-Text<br/>FastMCP :8000"]
+            ArXiv["ArXiv Search<br/>FastMCP"]
+            PaperOCR["Paper-to-Text<br/>FastMCP"]
         end
 
         subgraph Ray["Ray Serve Clusters"]
@@ -72,7 +72,7 @@ graph TB
     WebUI -->|Direct Model Access| MinimaxService
     GW -->|Route /| WebUI
     Pipelines -->|Search papers| ArXiv
-    Pipelines -->|Submit images| PaperOCR
+    Pipelines -->|Submit paper URLs| PaperOCR
     PaperOCR -->|Parse images| NemotronService
     Pipelines -->|LLM reasoning| MinimaxService
     ArXiv -.->|Fetch papers| ExternalArXiv["arXiv.org"]

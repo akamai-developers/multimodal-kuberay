@@ -56,8 +56,9 @@ spec:
             requests:
               cpu: 500m
               memory: 512Mi
-            limits:
-              memory: 4Gi   # PyPDFium + PIL image rendering is memory-hungry
+            # No memory limit — nodes have 350-700 GiB allocatable with
+            # only ~20% utilization.  OCR batch size varies widely so let
+            # the pod use what it needs rather than OOMKilling.
           readinessProbe:
             httpGet:
               path: /health

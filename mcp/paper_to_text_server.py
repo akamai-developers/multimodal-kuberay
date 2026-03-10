@@ -107,7 +107,7 @@ async def read_papers(papers: list[dict]) -> str:
                   - title   (str): Paper title (for tracking).
                   - pdf_url (str): Direct URL to the PDF file.
                 Optionally:
-                  - max_pages (int): Pages to OCR per paper (1–30, default all).
+                  - max_pages (int): Pages to OCR per paper (1-30, default all).
     """
     if not papers:
         return "[Error: No papers provided.]"
