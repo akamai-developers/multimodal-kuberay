@@ -51,9 +51,6 @@ nvidia_gpu_operator_version = os.getenv("NVIDIA_GPU_OPERATOR_VERSION", "v25.10.0
 kuberay_operator_version = os.getenv("KUBERAY_OPERATOR_VERSION", "1.5.1")
 envoy_gateway_version = os.getenv("ENVOY_GATEWAY_VERSION", "v1.7.0")
 
-# Container image for Nemotron Parse workers (deps pre-baked via GitHub Action)
-nemotron_deps_image = os.getenv("NEMOTRON_DEPS_IMAGE", "ghcr.io/akamai-developers/multimodal-kuberay/nemotron-deps:latest")
-
 # Validate required environment variables (skip during teardown)
 _required_vars = {
     "HUGGINGFACE_TOKEN": huggingface_token,
@@ -340,9 +337,11 @@ k8s_resource(
 )
 
 # Model Sync Script ConfigMap — shared scripts for init containers
-# Includes the s5cmd-based object storage downloader and the warmup
-# script (sends dummy requests to pre-heat CUDA caches).
+# Includes the s5cmd-based object storage downloader, the Nemotron
+# prepare-deps wrapper (parallel model download + pip cache warmup),
+# and the warmup script (sends dummy requests to pre-heat CUDA caches).
 model_sync_script = str(read_file("scripts/model-sync.sh"))
+prepare_deps_nemotron_script = str(read_file("scripts/prepare-deps-nemotron.sh"))
 warmup_nemotron_script = str(read_file("scripts/warmup-nemotron.sh"))
 k8s_yaml(encode_yaml({
     "apiVersion": "v1",
@@ -353,6 +352,7 @@ k8s_yaml(encode_yaml({
     },
     "data": {
         "model-sync.sh": model_sync_script,
+        "prepare-deps-nemotron.sh": prepare_deps_nemotron_script,
         "warmup-nemotron.sh": warmup_nemotron_script,
     },
 }))
@@ -427,22 +427,7 @@ local_resource(
 # 16 workers (1 per MIG device) across the 2x 2-GPU nodes.
 # Each pod gets 1 MIG 1g.24gb instance via CDI as CUDA device 0.
 # No runtime patching needed — clean GPU enumeration.
-# Image override: set NEMOTRON_DEPS_IMAGE env var to use a different image.
-nemotron_yaml = read_yaml_stream("manifests/rayservice-nemotron-parse.yaml")
-for doc in nemotron_yaml:
-    if doc.get("kind") == "RayService":
-        head_containers = doc["spec"]["rayClusterConfig"]["headGroupSpec"]["template"]["spec"]["containers"]
-        for c in head_containers:
-            if c.get("image"):
-                c["image"] = nemotron_deps_image
-        for wg in doc["spec"]["rayClusterConfig"].get("workerGroupSpecs", []):
-            for ic in wg["template"]["spec"].get("initContainers", []):
-                if ic.get("image"):
-                    ic["image"] = nemotron_deps_image
-            for c in wg["template"]["spec"]["containers"]:
-                if c.get("image"):
-                    c["image"] = nemotron_deps_image
-k8s_yaml(encode_yaml_stream(nemotron_yaml))
+k8s_yaml("manifests/rayservice-nemotron-parse.yaml")
 k8s_resource(
     new_name="nemotron-parse-service",
     objects=[

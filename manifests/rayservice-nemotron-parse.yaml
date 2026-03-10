@@ -72,6 +72,13 @@ spec:
             disable_log_stats: false
             tensor_parallel_size: 1
             load_format: safetensors
+          runtime_env:
+            pip:
+              - "numpy<2.0"
+              - "cloudpickle>=3.1.0"
+              - timm==1.0.22
+              - albumentations==2.0.8
+              - open_clip_torch
           deployment_config:
             num_replicas: 16              # All 16 MIG workers serve from startup
             max_ongoing_requests: 16
@@ -98,7 +105,7 @@ spec:
         spec:
           containers:
             - name: ray-head
-              image: ghcr.io/akamai-developers/multimodal-kuberay/nemotron-deps:latest
+              image: rayproject/ray-llm:2.54.0-py311-cu128
               env:
                 - name: RAY_GRAFANA_HOST
                   value: "http://kube-prometheus-stack-grafana.kube-system.svc.cluster.local"
@@ -167,12 +174,13 @@ spec:
                           values: ["all-1g.24gb"]
 
             initContainers:
-              # Download model from Linode Object Storage.
-              # Python deps are pre-installed in the container image
-              # (built by the nemotron-deps GitHub Action).
+              # Download model from Linode Object Storage + pre-warm pip cache in parallel.
+              # The runtime_env pip install runs when Ray creates the Serve
+              # replica, but with wheels already in the cache it completes
+              # in seconds instead of minutes.
               - name: prepare-deps
-                image: ghcr.io/akamai-developers/multimodal-kuberay/nemotron-deps:latest
-                command: ["/bin/bash", "/scripts/model-sync.sh", "nvidia/NVIDIA-Nemotron-Parse-v1.2", "/model-cache"]
+                image: rayproject/ray-llm:2.54.0-py311-cu128
+                command: ["/bin/bash", "/scripts/prepare-deps-nemotron.sh"]
                 envFrom:
                   - secretRef:
                       name: obj-store-secret
@@ -184,12 +192,14 @@ spec:
                 volumeMounts:
                   - name: model-cache
                     mountPath: /model-cache
+                  - name: pip-cache
+                    mountPath: /home/ray/.cache/pip
                   - name: model-sync
                     mountPath: /scripts
 
             containers:
               - name: ray-worker
-                image: ghcr.io/akamai-developers/multimodal-kuberay/nemotron-deps:latest
+                image: rayproject/ray-llm:2.54.0-py311-cu128
                 # Override KubeRay's auto-injected readiness probe.
                 # The default probe checks BOTH raylet health AND Serve
                 # proxy health (port 8000).  Only workers hosting a vLLM
@@ -224,6 +234,8 @@ spec:
                 volumeMounts:
                   - name: model-cache
                     mountPath: /model-cache
+                  - name: pip-cache
+                    mountPath: /home/ray/.cache/pip
                   - name: dshm
                     mountPath: /dev/shm
                   - name: model-sync
@@ -232,6 +244,9 @@ spec:
               - name: model-cache
                 emptyDir:
                   sizeLimit: 8Gi   # Nemotron Parse v1.2 is <1B params (~2GB weights)
+              - name: pip-cache
+                emptyDir:
+                  sizeLimit: 4Gi
               - name: dshm
                 emptyDir:
                   medium: Memory
