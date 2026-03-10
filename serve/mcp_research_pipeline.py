@@ -186,9 +186,11 @@ Every selected paper will be fully OCR'd (all pages), so be selective.
 ## Rules
 - ALWAYS respond in English.
 - Do NOT call any OCR or paper-reading tools — they are not available yet.
+- Do NOT call get_paper_info — the search results already contain abstracts.
 - Select exactly 6-8 papers. Focus on the most relevant and influential ones.
 - Use max_results=20 for each query to get broad coverage.
-- When ready, output your selection — do NOT call more tools.
+- After your search queries, output your selection IMMEDIATELY — do NOT call \
+  more tools. You have a STRICT limit of 6 tool calls total.
 - NEVER output tool calls as XML text. Use the function calling interface.
 """
 
@@ -415,11 +417,16 @@ class Pipeline:
                 yield "_Phase 1 turn limit reached. Requesting selection..._\n\n"
                 p1_msgs.append({
                     "role": "user",
-                    "content": "Output your selected papers NOW.",
+                    "content": (
+                        "STOP. Tools are no longer available. Do NOT output any "
+                        "tool calls, XML, or invoke tags. Output ONLY your "
+                        "selected papers list in Markdown NOW."
+                    ),
                 })
                 async for delta in _stream_response(minimax, p1_msgs):
                     phase1_output += delta
                     yield delta
+                phase1_output = _strip_xml_tool_calls(phase1_output)
                 phase1_streamed = True
 
             elapsed_p1 = time.time() - t0
@@ -504,7 +511,9 @@ class Pipeline:
                 p2_msgs.append({
                     "role": "user",
                     "content": (
-                        "Write the final research synthesis NOW."
+                        "STOP. Tools are no longer available. Do NOT output any "
+                        "tool calls, XML, or invoke tags. Write the final "
+                        "research synthesis in Markdown NOW."
                     ),
                 })
                 async for delta in _stream_response(minimax, p2_msgs):
@@ -568,6 +577,7 @@ async def _run_turn(
     saw_any_tool_call = False
     streamed_partial = False  # True if content was yielded before tool calls
     think_filter = _ThinkFilter()
+    rep_detector = _RepetitionDetector()
 
     try:
         stream = await minimax.chat.completions.create(
@@ -576,6 +586,7 @@ async def _run_turn(
             tools=tools,
             tool_choice="auto",
             temperature=0.4,
+            frequency_penalty=0.3,
             max_tokens=max_tokens,
             stream=True,
         )
@@ -589,6 +600,11 @@ async def _run_turn(
 
             if delta.content:
                 collected_content += delta.content
+                rep_detector.feed(delta.content)
+                if rep_detector.is_degenerate():
+                    print(f"[mcp_research_pipeline] Repetition detected in {phase_label}, aborting generation")
+                    yield _TurnChunk(text="\n\n_[Generation stopped — repetition detected]_\n\n")
+                    break
                 # Stream content to UI immediately once we know
                 # this isn't a tool-calling turn
                 if not saw_any_tool_call:
@@ -814,14 +830,21 @@ async def _stream_response(minimax, messages, max_tokens=16384):
             model="minimax-m2.5",
             messages=messages,
             temperature=0.7,
+            frequency_penalty=0.3,
             max_tokens=max_tokens,
             stream=True,
         )
         tf = _ThinkFilter()
+        rep_detector = _RepetitionDetector()
         async for chunk in stream:
             if chunk.choices:
                 d = chunk.choices[0].delta.content
                 if d:
+                    rep_detector.feed(d)
+                    if rep_detector.is_degenerate():
+                        print("[mcp_research_pipeline] Repetition detected in synthesis, aborting")
+                        yield "\n\n_[Generation stopped — repetition detected]_\n\n"
+                        break
                     clean = tf.feed(d)
                     if clean:
                         yield clean
@@ -903,6 +926,16 @@ def _strip_think_tags(text: str) -> str:
     # Orphan opening tags left over
     text = text.replace("<think>", "")
     return text
+
+
+def _strip_xml_tool_calls(text: str) -> str:
+    """Remove XML tool-call blocks that MiniMax sometimes emits as text."""
+    # <invoke name="...">...</invoke> or minimax:tool_call blocks
+    text = re.sub(
+        r'(?:minimax:tool_call\s*)?<invoke\s+name="[^"]*">.*?</invoke>\s*(?:minimax:tool_call)?',
+        '', text, flags=re.DOTALL,
+    )
+    return text.strip()
 
 
 class _ThinkFilter:
@@ -1016,3 +1049,33 @@ def _truncate_tool_result(fn_name: str, text: str, max_chars: int) -> str:
             )
 
     return separator.join(truncated_papers)
+
+
+class _RepetitionDetector:
+    """Detects degenerate repetition loops in streaming LLM output.
+
+    Keeps a sliding window of recent tokens.  When a short phrase repeats
+    more than `threshold` times in the window, `is_degenerate()` returns
+    True so the caller can abort generation.
+    """
+
+    def __init__(self, window: int = 200, threshold: int = 8):
+        self._window: list[str] = []
+        self._max = window
+        self._threshold = threshold
+
+    def feed(self, text: str) -> None:
+        self._window.append(text)
+        if len(self._window) > self._max:
+            self._window = self._window[-self._max:]
+
+    def is_degenerate(self) -> bool:
+        recent = "".join(self._window[-self._max:])
+        if len(recent) < 40:
+            return False
+        # Check the last 20 chars as a candidate repeat pattern
+        tail = recent[-20:].strip()
+        if len(tail) < 3:
+            return False
+        count = recent.count(tail)
+        return count >= self._threshold

@@ -57,7 +57,7 @@ spec:
               cpu: 500m
               memory: 512Mi
             limits:
-              memory: 2Gi   # PyPDFium + PIL image rendering is memory-hungry
+              memory: 4Gi   # PyPDFium + PIL image rendering is memory-hungry
           readinessProbe:
             httpGet:
               path: /health

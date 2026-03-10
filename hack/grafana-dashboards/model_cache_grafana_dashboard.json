@@ -90,8 +90,8 @@
         },
         {
           "datasource": "${datasource}",
-          "expr": "max(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n) - max(\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)",
-          "legendFormat": "Nemotron Parse v1.2",
+          "expr": "avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)",
+          "legendFormat": "Nemotron Parse v1.2 (avg)",
           "refId": "B"
         }
       ]
@@ -158,8 +158,8 @@
         },
         {
           "datasource": "${datasource}",
-          "expr": "max(ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ max(ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ 1000",
-          "legendFormat": "Nemotron Parse v1.2",
+          "expr": "avg(\n  ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  / ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n) / 1000",
+          "legendFormat": "Nemotron Parse v1.2 (avg)",
           "refId": "B"
         }
       ]
@@ -226,8 +226,8 @@
         },
         {
           "datasource": "${datasource}",
-          "expr": "(\n  max(container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n)\n+\n(\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n  / 1000\n)",
-          "legendFormat": "Nemotron Parse v1.2",
+          "expr": "avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)\n+\navg(\n  ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n) / 1000",
+          "legendFormat": "Nemotron Parse v1.2 (avg)",
           "refId": "B"
         }
       ]
@@ -364,7 +364,7 @@
         },
         {
           "datasource": "${datasource}",
-          "expr": "max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000",
+          "expr": "(max(container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"}) - max(kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"}))\n+\n(max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000)",
           "legendFormat": "Total Startup",
           "instant": true,
           "refId": "C"
@@ -477,22 +477,22 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "max(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n) - max(\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)",
-          "legendFormat": "OBJ Download",
+          "expr": "avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)",
+          "legendFormat": "OBJ Download (avg)",
           "instant": true,
           "refId": "A"
         },
         {
           "datasource": "${datasource}",
-          "expr": "max(ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ max(ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ 1000",
-          "legendFormat": "Model Load (GPU)",
+          "expr": "avg(\n  ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  / ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n) / 1000",
+          "legendFormat": "Model Load (GPU) (avg)",
           "instant": true,
           "refId": "B"
         },
         {
           "datasource": "${datasource}",
-          "expr": "max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n/ 1000",
-          "legendFormat": "Total Startup",
+          "expr": "avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)\n+\navg(\n  ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n) / 1000",
+          "legendFormat": "Total Startup (avg)",
           "instant": true,
           "refId": "C"
         }
@@ -634,7 +634,7 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "(\n  max(container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n)\n/ (\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"})\n  / 1000\n) * 100",
+          "expr": "avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)\n/ (\n  avg(\n    ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n    / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  ) / 1000\n) * 100",
           "legendFormat": "Nemotron Cache %",
           "refId": "A"
         }
@@ -702,8 +702,8 @@
         },
         {
           "datasource": "${datasource}",
-          "expr": "max(container_network_receive_bytes_total{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n/ 1048576\n/ (\n  max(container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n)",
-          "legendFormat": "Nemotron",
+          "expr": "avg(container_network_receive_bytes_total{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n/ 1048576\n/ avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)",
+          "legendFormat": "Nemotron (avg)",
           "refId": "B"
         }
       ]
@@ -786,7 +786,7 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "max by (application) (\n  ray_serve_replica_initialization_latency_ms_sum{deployment!=\"OpenAiIngress\"}\n  / ray_serve_replica_initialization_latency_ms_count{deployment!=\"OpenAiIngress\"}\n) / 1000",
+          "expr": "avg by (application) (\n  ray_serve_replica_initialization_latency_ms_sum{deployment!=\"OpenAiIngress\"}\n  / ray_serve_replica_initialization_latency_ms_count{deployment!=\"OpenAiIngress\"}\n) / 1000",
           "legendFormat": "{{application}}",
           "refId": "A"
         }
