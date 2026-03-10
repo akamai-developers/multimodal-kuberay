@@ -24,6 +24,7 @@ import logging
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
 from fastmcp import FastMCP
 from starlette.requests import Request
@@ -197,10 +198,7 @@ async def _process_single_paper(
     # 2. Render pages to PNG (sync — run in executor)
     log.info("[%s] Rendering PDF pages (max_pages=%d)", title, max_pages)
     t1 = time.monotonic()
-    loop = asyncio.get_event_loop()
-    page_images = await loop.run_in_executor(
-        _pdfium_executor, _render_pdf_pages, pdf_bytes, max_pages,
-    )
+    page_images = await _run_in_pdfium_pool(pdf_bytes, max_pages)
     render_time = time.monotonic() - t1
     log.info("[%s] Rendered %d pages in %.1fs", title, len(page_images) if page_images else 0, render_time)
 
@@ -272,7 +270,32 @@ async def _process_single_paper(
 # threads corrupt the C library's internal state.  Use a ProcessPoolExecutor
 # so each worker gets its own process (and therefore its own copy of the C
 # library), enabling TRUE parallel rendering without thread-safety issues.
-_pdfium_executor = ProcessPoolExecutor(max_workers=4, max_tasks_per_child=50)
+_pdfium_executor: ProcessPoolExecutor | None = None
+_pool_lock = asyncio.Lock()
+
+
+def _new_pool() -> ProcessPoolExecutor:
+    return ProcessPoolExecutor(max_workers=4, max_tasks_per_child=50)
+
+
+async def _run_in_pdfium_pool(pdf_bytes: bytes, max_pages: int) -> list[str]:
+    """Run PDF rendering in the process pool, auto-recovering if broken."""
+    global _pdfium_executor
+    async with _pool_lock:
+        if _pdfium_executor is None:
+            _pdfium_executor = _new_pool()
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(
+            _pdfium_executor, _render_pdf_pages, pdf_bytes, max_pages,
+        )
+    except BrokenProcessPool:
+        log.warning("ProcessPoolExecutor broken — creating a new one")
+        async with _pool_lock:
+            _pdfium_executor = _new_pool()
+        return await loop.run_in_executor(
+            _pdfium_executor, _render_pdf_pages, pdf_bytes, max_pages,
+        )
 
 
 def _render_pdf_pages(pdf_bytes: bytes, max_pages: int) -> list[str]:

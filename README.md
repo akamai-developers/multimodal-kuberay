@@ -289,6 +289,8 @@ Once complete, access the Tilt UI at http://localhost:10350 to monitor deploymen
 | `OBJ_ENDPOINT_HOSTNAME` | Yes      | Object Storage endpoint (e.g. `us-ord-1.linodeobjects.com`)   |
 | `OBJ_REGION`            | Yes      | Object Storage region (e.g. `us-ord-1`)                       |
 | `MODEL_BUCKET`          | No       | Bucket name for cached model weights (default: `model-cache`) |
+| `WEBUI_ADMIN_EMAIL`     | No       | OpenWebUI admin email, auto-created on first boot (default: `admin@demo.local`) |
+| `WEBUI_ADMIN_PASSWORD`  | No       | OpenWebUI admin password (default: `demo1234`) |
 
 ### Model Configuration
 
@@ -457,6 +459,7 @@ make ci             # Run Tilt in CI mode (non-interactive)
 make down           # Tear down Tilt resources (keeps cluster running)
 make test           # Smoke test the MiniMax M2.5 API
 make test-research  # Run a full research pipeline test
+make nuke-cache     # Delete cached models and destroy Object Storage bucket
 make destroy        # Destroy the entire LKE cluster
 make clean          # Clean up local files
 ```
@@ -503,11 +506,13 @@ multimodal-kuberay/
 ├── terraform.tfvars.example        # Example Terraform configuration
 ├── .env.example                    # Example environment variables
 ├── assets/
-│   └── custom.css                  # OpenWebUI custom branding CSS
+│   ├── custom.css                  # OpenWebUI custom branding CSS
+│   └── Akamai Cloud - *.png        # Akamai logo variants for OpenWebUI branding
 ├── hack/
 │   ├── monitoring-values.yaml      # kube-prometheus-stack Helm values
-│   └── grafana-dashboards/         # 7 Ray-specific Grafana dashboards
+│   └── grafana-dashboards/         # 8 Grafana dashboards (Ray metrics + DCGM GPU exporter)
 │       ├── data_grafana_dashboard.json
+│       ├── dcgm_exporter_grafana_dashboard.json
 │       ├── default_grafana_dashboard.json
 │       ├── model_cache_grafana_dashboard.json
 │       ├── serve_deployment_grafana_dashboard.json
@@ -534,6 +539,7 @@ multimodal-kuberay/
 ├── scripts/
 │   ├── model-sync.sh               # s5cmd-based Object Storage model downloader
 │   ├── model-upload.sh             # HuggingFace → Object Storage caching
+│   ├── nuke-bucket.sh              # Delete cached models and destroy Object Storage bucket
 │   ├── prepare-deps-nemotron.sh    # Init container: parallel model download + pip warmup
 │   ├── warmup-nemotron.sh          # Warmup: sends 256 concurrent dummy requests
 │   ├── seed-streaming-config.sh    # OpenWebUI postStart hook
