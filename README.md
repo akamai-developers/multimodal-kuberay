@@ -2,9 +2,13 @@
 
 Deploy a GPU-accelerated deep research agent on Linode Kubernetes Engine with MCP tool-use, real-time streaming, and an OpenAI-compatible API.
 
+**Docs**:
+- [Chat completions API and agent harness setup](./docs/chat-completions-and-agents.md)
+- [Benchmarking the public API](./docs/benchmark.md)
+
 ## Overview
 
-This repository demonstrates how to deploy a production-ready deep research agent using KubeRay on Linode Kubernetes Engine (LKE). A user asks a research question and the system autonomously searches arXiv, reads full papers via OCR, and synthesizes a comprehensive research report — all streamed in real time through OpenWebUI or a standard OpenAI-compatible API, both accessed via a shared Envoy Gateway.
+This repository demonstrates how to deploy a production-ready deep research agent using KubeRay on Linode Kubernetes Engine (LKE). A user asks a research question and the system autonomously searches arXiv, reads full papers via OCR, and synthesizes a comprehensive research report. The deployment exposes MiniMax M2.5 through a public OpenAI-compatible Gateway endpoint, while the full research pipeline is available through OpenWebUI.
 
 **Learning Objectives**: Orchestrate GPU workloads on Kubernetes, serve LLMs with Ray Serve, wire up MCP tool servers, configure NVIDIA MIG partitioning, and set up secure API gateways.
 
@@ -224,7 +228,7 @@ The NVFP4 quantization of MiniMax M2.5 is purpose-built to exploit Blackwell's h
 - **MoE models are memory-bandwidth-bound** — During inference, tokens route to different experts causing many weight reads. FP4 weights mean proportionally higher tokens/second since less data moves across the memory bus per expert computation.
 
 **Request Flow** (Deep Research Pipeline):
-1. User submits a research question via OpenWebUI (at `http://<gateway>/`) or directly via the Gateway API (at `http://<gateway>/v1/chat/completions`)
+1. User submits a research question via OpenWebUI (at `http://<gateway>/`) or sends a direct MiniMax request to the Gateway API (at `http://<gateway>/v1/chat/completions`)
 2. Gateway routes OpenWebUI traffic to the web interface; API traffic to MiniMax M2.5 NVFP4
 3. OpenWebUI routes to the Pipelines server, which runs the MCP research pipeline
 4. **Phase 1 — Search & Select**: MiniMax M2.5 NVFP4 calls the ArXiv MCP server to search for and select 6-8 relevant papers
@@ -374,11 +378,17 @@ Once deployed, the following services are available:
 
 ### Making API Requests
 
+For client examples, agent harness setup, and the distinction between the public Gateway API and the local Pipelines API, see [docs/chat-completions-and-agents.md](./docs/chat-completions-and-agents.md).
+
 #### Using Test Scripts
 
 ```bash
 # Smoke test — simple chat completion via the Gateway
 make test
+
+# Run staged latency/throughput benchmarks against the public API
+# See docs/benchmark.md for full usage
+python3 scripts/minimax_parallel_benchmark.py --help
 
 # Full research pipeline test — streams a deep research query
 make test-research
@@ -447,6 +457,8 @@ curl --no-buffer \
 - **API Endpoints** (`/v1/*`): Require Bearer token authentication. Use `Authorization: Bearer ${OPENAI_API_KEY}` header with the value from your `.env` file.
 - **OpenWebUI** (`/`): Uses built-in username/password authentication. No API key required. Create an admin account on first access.
 
+See [docs/chat-completions-and-agents.md](./docs/chat-completions-and-agents.md) for where the bearer token is set, how Tilt wires it into the Gateway, and how to rotate it.
+
 ### Monitoring Deployment Status
 
 ```bash
@@ -481,6 +493,8 @@ make nuke-cache     # Delete cached models and destroy Object Storage bucket
 make destroy        # Destroy the entire LKE cluster
 make clean          # Clean up local files
 ```
+
+Performance testing guidance lives in [docs/benchmark.md](./docs/benchmark.md).
 
 ### Making Changes
 
@@ -523,6 +537,9 @@ multimodal-kuberay/
 ├── outputs.tf                      # Terraform: Outputs (kubeconfig, cluster ID)
 ├── terraform.tfvars.example        # Example Terraform configuration
 ├── .env.example                    # Example environment variables
+├── docs/
+│   ├── benchmark.md                # Parallel benchmark guide for the public chat API
+│   └── chat-completions-and-agents.md  # Client setup, OpenCode config, API surface notes
 ├── assets/
 │   ├── custom.css                  # OpenWebUI custom branding CSS
 │   └── Akamai Cloud - *.png        # Akamai logo variants for OpenWebUI branding
