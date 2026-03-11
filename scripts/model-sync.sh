@@ -69,7 +69,7 @@ SPEED_GBPS=$(awk "BEGIN {e=${ELAPSED}+0; if (e>0) printf \"%.2f\", ${TOTAL_BYTES
 echo "Download complete — ${FILE_COUNT} files, ${TOTAL_GB} GB in ${ELAPSED}s (${SPEED_GBPS} GB/s)"
 
 # ── Push metrics to Prometheus Pushgateway ──────────────────────────────────
-# Derive a short job label from the bucket prefix (e.g. "MiniMaxAI/MiniMax-M2.5" → "minimax-m2.5")
+# Derive a short job label from the bucket prefix (e.g. "lukealonso/MiniMax-M2.5-NVFP4" → "minimax-m2.5-nvfp4")
 if [ -n "${PUSHGATEWAY_URL}" ]; then
   JOB_LABEL=$(echo "${BUCKET_PREFIX}" | awk -F/ '{print tolower($NF)}' | sed 's/[^a-z0-9._-]/-/g')
   INSTANCE_LABEL="${HOSTNAME:-unknown}"

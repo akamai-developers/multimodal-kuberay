@@ -15,7 +15,7 @@ This document provides coding standards, workflows, and commands for AI agents w
 
 **Key Components**:
 - NVIDIA GPU Operator (Blackwell/Ada GPUs)
-- KubeRay Operator + RayService (MiniMax M2.5 + Nemotron Parse v1.2)
+- KubeRay Operator + RayService (MiniMax M2.5 NVFP4 + Nemotron Parse v1.2)
 - Envoy Gateway (OpenAI-compatible API)
 
 ---

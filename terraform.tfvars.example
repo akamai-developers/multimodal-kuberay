@@ -15,7 +15,7 @@ kubernetes_version = "1.34"
 region             = "us-sea"
 
 # GPU Node Pool Configuration
-# 4-GPU node for MiniMax M2.5 (tensor parallelism across all 4 GPUs)
+# 4-GPU node for MiniMax M2.5 NVFP4 (2× TP=2 replicas)
 gpu_big_node_type  = "g3-gpu-rtxpro6000-blackwell-4"
 gpu_big_node_count = 1
 

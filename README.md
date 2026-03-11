@@ -9,7 +9,7 @@ This repository demonstrates how to deploy a production-ready deep research agen
 **Learning Objectives**: Orchestrate GPU workloads on Kubernetes, serve LLMs with Ray Serve, wire up MCP tool servers, configure NVIDIA MIG partitioning, and set up secure API gateways.
 
 **Current Stack**:
-- **MiniMax M2.5** — Frontier MoE reasoning model (4× Blackwell GPUs, tool-use, 65K context)
+- **MiniMax M2.5 NVFP4** — Frontier MoE reasoning model (NVFP4 quantized, 2× TP=2 replicas on 4 Blackwell GPUs, tool-use, 190K context)
 - **NVIDIA Nemotron Parse v1.2** — High-throughput OCR model (16 fixed replicas on MIG-partitioned GPUs, 1 MIG device each)
 - **MCP Servers** — ArXiv search + Paper-to-Text OCR, exposed as Streamable HTTP tool servers
 - **OpenWebUI** — Chat UI with the deep research pipeline available as a selectable model
@@ -20,8 +20,9 @@ This repository demonstrates how to deploy a production-ready deep research agen
 - 🛠️ **MCP tool servers** — ArXiv search and PDF-to-text OCR via FastMCP (Streamable HTTP transport)
 - 🚀 **OpenAI-compatible API** — Standard `/v1/chat/completions` endpoint via Envoy Gateway
 - 🌐 **Unified Gateway** — Single LoadBalancer for both OpenWebUI (`/`) and API (`/v1/*`) traffic with path-based routing
-- 🎮 **GPU-accelerated inference** — NVIDIA Blackwell GPUs with MIG partitioning (8× RTX PRO 6000)
+- 🎮 **GPU-accelerated inference** — NVIDIA Blackwell GPUs with native FP4 Tensor Cores and MIG partitioning (8× RTX PRO 6000)
 - 🧩 **NVIDIA MIG** — Multi-Instance GPU splits 4 physical GPUs into 16 isolated 24 GB instances
+- ⚡ **NVFP4 quantization** — 4-bit weights with FP8 micro-tensor scaling, purpose-built for Blackwell's 5th-gen Tensor Cores (~3.5× memory savings, 2× replicas)
 - 🔧 **Infrastructure-as-Code** — Terraform for cluster provisioning, Tilt for deployment orchestration
 - 🔐 **Secure by default** — Bearer token authentication, deny-by-default security policies
 - 📊 **Full observability** — Grafana dashboards, Prometheus metrics, Ray Dashboard
@@ -56,7 +57,7 @@ graph TB
         end
 
         subgraph Ray["Ray Serve Clusters"]
-            MinimaxService[MiniMax M2.5 RayService 4x GPUs]
+            MinimaxService[MiniMax M2.5 NVFP4 RayService 2×TP=2 replicas]
             NemotronService[Nemotron Parse v1.2 RayService 16X MIG GPUs]
         end
     end
@@ -91,11 +92,16 @@ graph LR
         GPU1["GPU 1 — 96 GB"]
         GPU2["GPU 2 — 96 GB"]
         GPU3["GPU 3 — 96 GB"]
-        MM["MiniMax M2.5<br/>TP=4 across all 4 GPUs"]
-        GPU0 --- MM
-        GPU1 --- MM
-        GPU2 --- MM
-        GPU3 --- MM
+        subgraph R1["Replica 1 — TP=2"]
+            MM1["MiniMax M2.5 NVFP4"]
+        end
+        subgraph R2["Replica 2 — TP=2"]
+            MM2["MiniMax M2.5 NVFP4"]
+        end
+        GPU0 --- MM1
+        GPU1 --- MM1
+        GPU2 --- MM2
+        GPU3 --- MM2
     end
 
     subgraph Node2["Node 2 — 2× RTX PRO 6000 Blackwell (MIG)"]
@@ -133,19 +139,19 @@ graph LR
 
 | Node           | GPUs                         | MIG                | Model               | Workers                           |
 |----------------|------------------------------|--------------------|---------------------|-----------------------------------|
-| 4-GPU node     | 4× RTX PRO 6000 (96 GB each) | Disabled           | MiniMax M2.5 (TP=4) | 1 worker pod                      |
+| 4-GPU node     | 4× RTX PRO 6000 (96 GB each) | Disabled           | MiniMax M2.5 NVFP4 (2× TP=2 replicas) | 1 worker pod               |
 | 2-GPU node × 2 | 2× RTX PRO 6000 each         | 4× 1g.24gb per GPU | Nemotron Parse v1.2 | 8 worker pods per node (16 total) |
 
 ### Deep Research Pipeline
 
-The research pipeline is a two-phase MCP agentic workflow orchestrated by MiniMax M2.5:
+The research pipeline is a two-phase MCP agentic workflow orchestrated by MiniMax M2.5 NVFP4:
 
 ```mermaid
 sequenceDiagram
     actor User
     participant WebUI as OpenWebUI
     participant Pipe as Pipelines Server
-    participant MM as MiniMax M2.5
+    participant MM as MiniMax M2.5 NVFP4
     participant ArXiv as ArXiv MCP Server
     participant PaperMCP as Paper-to-Text MCP
     participant NP as Nemotron Parse<br/>(16 replicas)
@@ -198,7 +204,7 @@ sequenceDiagram
 - **NVIDIA GPU Operator** — GPU driver/runtime management with CDI and MIG Manager
 - **KubeRay Operator** — Ray cluster lifecycle management on Kubernetes
 - **Ray Serve** — Scalable LLM serving framework:
-  - **MiniMax M2.5** — Frontier MoE model for reasoning and tool-use (4 GPUs, tensor parallelism)
+  - **MiniMax M2.5 NVFP4** — Frontier MoE model for reasoning and tool-use (NVFP4 quantized, 2× TP=2 replicas on 4 GPUs)
   - **Nemotron Parse v1.2** — OCR model (16 fixed replicas, 1 MIG GPU each, pre-warmed at deploy time)
 - **OpenWebUI** — Chat interface with persistent storage and custom branding
 - **Pipelines Server** — Hosts the MCP research pipeline, exposes it as a selectable model in OpenWebUI
@@ -207,12 +213,22 @@ sequenceDiagram
 - **kube-prometheus-stack** — Prometheus + Grafana with Ray-specific dashboards
 - **Tilt** — Live development environment with automatic reloading
 
+### Why NVFP4 on Blackwell
+
+The NVFP4 quantization of MiniMax M2.5 is purpose-built to exploit Blackwell's hardware capabilities:
+
+- **5th-Gen Tensor Cores with native FP4 datapaths** — Blackwell introduces hardware-accelerated FP4 compute via the second-generation Transformer Engine with micro-tensor scaling. The NVFP4 format (4-bit weights + blockwise FP8 scales per 16 elements) maps directly to what the Tensor Cores execute natively — no software dequantization overhead.
+- **~3.5× memory reduction** — Quantizing the MoE expert layers from BF16 to NVFP4 shrinks the model from ~450 GB to ~130 GB on disk. This is what enables running 2× TP=2 replicas on 4 GPUs instead of a single TP=4 replica, doubling serving throughput.
+- **CUTLASS fused MoE kernels** — vLLM's dedicated `trtllm_nvfp4_moe` and `linear_qutlass_nvfp4` kernels fuse MoE expert routing with FP4 GEMM operations into single Tensor Core calls, maximizing hardware utilization.
+- **Selective quantization preserves quality** — Only the MoE expert MLP layers (~90%+ of parameters) are quantized; attention layers stay in BF16. Combined with natural top-k routing calibration on a diverse dataset (code, math, reasoning, multilingual), this achieves near-lossless accuracy (86.2% MMLU-Pro vs the original BF16 model).
+- **MoE models are memory-bandwidth-bound** — During inference, tokens route to different experts causing many weight reads. FP4 weights mean proportionally higher tokens/second since less data moves across the memory bus per expert computation.
+
 **Request Flow** (Deep Research Pipeline):
 1. User submits a research question via OpenWebUI (at `http://<gateway>/`) or directly via the Gateway API (at `http://<gateway>/v1/chat/completions`)
-2. Gateway routes OpenWebUI traffic to the web interface; API traffic to MiniMax M2.5
+2. Gateway routes OpenWebUI traffic to the web interface; API traffic to MiniMax M2.5 NVFP4
 3. OpenWebUI routes to the Pipelines server, which runs the MCP research pipeline
-4. **Phase 1 — Search & Select**: MiniMax M2.5 calls the ArXiv MCP server to search for and select 6-8 relevant papers
-5. **Phase 2 — Read & Synthesize**: MiniMax M2.5 calls the Paper-to-Text MCP server, which downloads PDFs, renders pages to PNG, and OCRs all pages concurrently through 16 Nemotron Parse replicas, then writes a comprehensive report with inline citations
+4. **Phase 1 — Search & Select**: MiniMax M2.5 NVFP4 calls the ArXiv MCP server to search for and select 6-8 relevant papers
+5. **Phase 2 — Read & Synthesize**: MiniMax M2.5 NVFP4 calls the Paper-to-Text MCP server, which downloads PDFs, renders pages to PNG, and OCRs all pages concurrently through 16 Nemotron Parse replicas, then writes a comprehensive report with inline citations
 6. The report streams back token-by-token through the Gateway to the user
 
 ## Prerequisites
@@ -257,7 +273,7 @@ make all
 # - Provision LKE cluster with GPU nodes: ~5-10 minutes
 # - Install operators (GPU, KubeRay, Envoy): ~5 minutes
 # - Upload models to Object Storage: ~10-15 minutes
-# - Deploy MiniMax M2.5 + Nemotron Parse + MCP servers: ~10-15 minutes
+# - Deploy MiniMax M2.5 NVFP4 + Nemotron Parse + MCP servers: ~10-15 minutes
 ```
 
 Once complete, access the Tilt UI at http://localhost:10350 to monitor deployment status.
@@ -272,7 +288,7 @@ Once complete, access the Tilt UI at http://localhost:10350 to monitor deploymen
 | `cluster_label`      | Cluster name                  | `"myllm"`                         | Any descriptive string                                                                                      |
 | `region`             | Linode region                 | `"us-lax"`                        | [Available regions](https://www.linode.com/docs/products/platform/get-started/guides/choose-a-data-center/) |
 | `kubernetes_version` | Kubernetes version            | `"1.34"`                          | Check LKE supported versions                                                                                |
-| `gpu_big_node_type`  | Large GPU node type (MiniMax) | `"g3-gpu-rtxpro6000-blackwell-4"` | 4× Blackwell GPUs — hosts MiniMax M2.5                                                                      |
+| `gpu_big_node_type`  | Large GPU node type (MiniMax) | `"g3-gpu-rtxpro6000-blackwell-4"` | 4× Blackwell GPUs — hosts MiniMax M2.5 NVFP4 (2× TP=2 replicas)                                                                      |
 | `gpu_big_node_count` | Number of large GPU nodes     | `1`                               | 1 node for the MoE model                                                                                    |
 | `gpu_node_type`      | Small GPU node type (OCR)     | `"g3-gpu-rtxpro6000-blackwell-2"` | 2× Blackwell GPUs — MIG-partitioned for Nemotron Parse (8 instances/node)                                   |
 | `gpu_node_count`     | Number of small GPU nodes     | `2`                               | 2 nodes × 8 MIG instances = 16 OCR replicas                                                                 |
@@ -296,12 +312,14 @@ Once complete, access the Tilt UI at http://localhost:10350 to monitor deploymen
 
 **Deployed Models**:
 
-1. **MiniMax M2.5** (`minimax-m2.5`)
+1. **MiniMax M2.5 NVFP4** (`minimax-m2.5`)
    - **Role**: Primary reasoning model — orchestrates the research pipeline via tool-use
-   - **Developer**: MiniMax
-   - **Architecture**: Mixture of Experts (MoE)
-   - **GPU Allocation**: 4 GPUs (tensor parallelism on a single 4-GPU Blackwell node)
-   - **Context Window**: 65,536 tokens
+   - **Developer**: MiniMax (quantized by lukealonso using NVIDIA ModelOpt)
+   - **Architecture**: Mixture of Experts (MoE), 230B total parameters, NVFP4 quantized (~130 GB on disk)
+   - **Quantization**: NVFP4 — 4-bit weights with blockwise FP8 (E4M3) scale factors per 16 elements. Only MoE expert MLP layers (gate/up/down projections) are quantized; attention layers remain in BF16 for quality preservation. Achieves 86.2% on MMLU-Pro (Math 94.7%, Physics 91.5%)
+   - **GPU Allocation**: 2× TP=2 replicas on a single 4-GPU Blackwell node (2 GPUs per replica)
+   - **Context Window**: 190,000 tokens
+   - **Inference Stack**: vLLM 0.15.1+ with CUTLASS NVFP4 MoE kernels, FLASH_ATTN attention backend
    - **Capabilities**: Tool calling, chain-of-thought reasoning, structured output
    - **Model Source**: Cached in Akamai Object Storage, synced via init container to emptyDir at boot
 
@@ -335,14 +353,14 @@ Once deployed, the following services are available:
 
 - **OpenWebUI**: Access via Gateway at `http://<GATEWAY_IP>/`  
   Get the Gateway IP: `kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}'`  
-  Chat interface — select "MiniMax M2.5" for direct chat or "Deep Research Agent" for the research pipeline  
+  Chat interface — select "MiniMax M2.5 NVFP4" for direct chat or "Deep Research Agent" for the research pipeline  
   Note: OpenWebUI has its own authentication (username/password), no API key required
 
 - **MiniMax Ray Dashboard**: http://localhost:8265 (via Tilt port-forward)  
   View cluster metrics, task execution, and resource utilization
 
 - **MiniMax API**: http://localhost:8000 (via Tilt port-forward)  
-  Direct access to MiniMax M2.5 serving endpoint (bypasses Gateway)
+  Direct access to MiniMax M2.5 NVFP4 serving endpoint (bypasses Gateway)
 
 - **Nemotron Parse Ray Dashboard**: http://localhost:18265 (via Tilt port-forward)  
   Monitor OCR model replicas and GPU utilization across 16 MIG instances
@@ -381,7 +399,7 @@ echo "OpenWebUI: http://${GATEWAY_IP}/"
 # Navigate to the URL and sign up/sign in (OpenWebUI creates an admin account on first run)
 
 # 3. Select a model in the UI:
-#    - "MiniMax M2.5" for direct chat
+#    - "MiniMax M2.5 NVFP4" for direct chat
 #    - "Deep Research Agent" for the full research pipeline
 ```
 
@@ -394,7 +412,7 @@ echo "OpenWebUI: http://${GATEWAY_IP}/"
 # 1. Get the Gateway service IP
 export SERVICE_IP=$(kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}')
 
-# 2. Send a request to MiniMax M2.5
+# 2. Send a request to MiniMax M2.5 NVFP4
 curl -X POST "http://${SERVICE_IP}/v1/chat/completions" \
   -H "Authorization: Bearer ${OPENAI_API_KEY}" \
   -H "Content-Type: application/json" \
@@ -457,7 +475,7 @@ make status         # Check deployment status
 make up             # Start Tilt in interactive mode
 make ci             # Run Tilt in CI mode (non-interactive)
 make down           # Tear down Tilt resources (keeps cluster running)
-make test           # Smoke test the MiniMax M2.5 API
+make test           # Smoke test the MiniMax M2.5 NVFP4 API
 make test-research  # Run a full research pipeline test
 make nuke-cache     # Delete cached models and destroy Object Storage bucket
 make destroy        # Destroy the entire LKE cluster
@@ -521,7 +539,7 @@ multimodal-kuberay/
 │       └── train_grafana_dashboard.json
 ├── manifests/
 │   ├── gateway.yaml                # Envoy Gateway + SecurityPolicy + ClientTrafficPolicy
-│   ├── rayservice-minimax.yaml     # MiniMax M2.5 RayService (4 GPUs)
+│   ├── rayservice-minimax.yaml     # MiniMax M2.5 NVFP4 RayService (2× TP=2 replicas on 4 GPUs)
 │   ├── rayservice-nemotron-parse.yaml  # Nemotron Parse v1.2 RayService (16 MIG replicas)
 │   ├── nemotron-model-cache.yaml   # DaemonSet: per-node model cache for Nemotron Parse (hostPath)
 │   ├── nemotron-warmup-job.yaml    # Warmup Job — pre-heats all 16 OCR replicas
@@ -543,7 +561,7 @@ multimodal-kuberay/
 │   ├── nuke-bucket.sh              # Delete cached models and destroy Object Storage bucket
 │   ├── warmup-nemotron.sh          # Warmup: sends 256 concurrent dummy requests
 │   ├── seed-streaming-config.sh    # OpenWebUI postStart hook
-│   ├── test-llm.sh                 # MiniMax M2.5 API smoke test
+│   ├── test-llm.sh                 # MiniMax M2.5 NVFP4 API smoke test
 │   └── test-pipeline.sh            # Deep research pipeline test
 ├── AGENTS.md                       # Guide for AI coding agents
 └── README.md                       # This file
@@ -577,7 +595,7 @@ kubectl get nodes -l nvidia.com/mig.config -o jsonpath='{range .items[*]}{.metad
 
 **Model download is slow or stuck**
 ```bash
-# First run uploads models to Object Storage (~10-15 min for MiniMax M2.5)
+# First run uploads models to Object Storage (~5-10 min for MiniMax M2.5 NVFP4)
 # Subsequent runs sync from Object Storage (much faster)
 # Check the model-upload job and worker init container logs:
 kubectl logs job/model-upload -f

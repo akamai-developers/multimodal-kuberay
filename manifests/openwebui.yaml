@@ -42,7 +42,7 @@ spec:
             - containerPort: 8080
               name: http
           env:
-            # ── Backends: MiniMax M2.5 + Pipelines server ─────────────────
+            # ── Backends: MiniMax M2.5 NVFP4 + Pipelines server ─────────────────
             # OpenWebUI v0.8.x discovers models (including pipelines) from
             # all entries in OPENAI_API_BASE_URLS (semicolon-separated).
             - name: OPENAI_API_BASE_URLS

@@ -99,8 +99,8 @@ upload_model() {
 }
 
 echo "=== Caching models ($(date -u +%H:%M:%S)) ==="
-# MiniMax-M2.5 — large frontier MoE; download may take 30-60+ minutes
-upload_model "MiniMaxAI/MiniMax-M2.5" "MiniMaxAI/MiniMax-M2.5"
+# MiniMax-M2.5-NVFP4 — NVFP4 quantized MoE; ~130 GB
+upload_model "lukealonso/MiniMax-M2.5-NVFP4" "lukealonso/MiniMax-M2.5-NVFP4"
 # Nemotron Parse v1.2 — sub-1B OCR model, fast download
 upload_model "nvidia/NVIDIA-Nemotron-Parse-v1.2" "nvidia/NVIDIA-Nemotron-Parse-v1.2" \
   || echo "WARNING: Nemotron Parse upload failed"

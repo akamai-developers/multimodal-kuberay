@@ -37,7 +37,7 @@ spec:
     - name: minimax-llm-svc
       port: 8000
     timeouts:
-      request: "300s"   # MiniMax M2.5 is a large MoE; synthesis can take time
+      request: "300s"   # MiniMax M2.5 NVFP4 is a large MoE; synthesis can take time
       backendRequest: "300s"
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1

@@ -84,8 +84,8 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5\"})",
-          "legendFormat": "MiniMax M2.5 (4×GPU)",
+          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5-nvfp4\"})",
+          "legendFormat": "MiniMax M2.5 NVFP4 (2×GPU)",
           "refId": "A"
         },
         {
@@ -153,7 +153,7 @@
         {
           "datasource": "${datasource}",
           "expr": "max(ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000",
-          "legendFormat": "MiniMax M2.5 (4×GPU)",
+          "legendFormat": "MiniMax M2.5 NVFP4 (2×GPU)",
           "refId": "A"
         },
         {
@@ -220,8 +220,8 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5\"})\n+\n(\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / 1000\n)",
-          "legendFormat": "MiniMax M2.5 (4×GPU)",
+          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5-nvfp4\"})\n+\n(\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / 1000\n)",
+          "legendFormat": "MiniMax M2.5 NVFP4 (2×GPU)",
           "refId": "A"
         },
         {
@@ -246,7 +246,7 @@
     },
     {
       "datasource": "${datasource}",
-      "description": "Breakdown of startup phases for MiniMax M2.5 service (4×GPU, tensor_parallel_size=4). Shows how much time is spent in object storage cache download (init container) vs model GPU loading vs total startup. The cache download phase should be a small fraction of total.",
+      "description": "Breakdown of startup phases for MiniMax M2.5 NVFP4 service (2×GPU × 2 replicas, tensor_parallel_size=2). Shows how much time is spent in object storage cache download (init container) vs model GPU loading vs total startup. The cache download phase should be a small fraction of total.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -345,12 +345,12 @@
         },
         "xTickLabelRotation": 0
       },
-      "title": "MiniMax M2.5 — Startup Phase Breakdown",
+      "title": "MiniMax M2.5 NVFP4 — Startup Phase Breakdown",
       "type": "barchart",
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5\"})",
+          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5-nvfp4\"})",
           "legendFormat": "OBJ Download",
           "instant": true,
           "refId": "A"
@@ -364,7 +364,7 @@
         },
         {
           "datasource": "${datasource}",
-          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5\"})\n+\n(max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000)",
+          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5-nvfp4\"})\n+\n(max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000)",
           "legendFormat": "Total Startup",
           "instant": true,
           "refId": "C"
@@ -569,7 +569,7 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5\"})\n/ (\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / 1000\n) * 100",
+          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5-nvfp4\"})\n/ (\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / 1000\n) * 100",
           "legendFormat": "MiniMax Cache %",
           "refId": "A"
         }
@@ -696,7 +696,7 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "max(model_sync_bytes_total{job=\"minimax-m2.5\"})\n/ 1048576\n/ max(model_sync_duration_seconds{job=\"minimax-m2.5\"})",
+          "expr": "max(model_sync_bytes_total{job=\"minimax-m2.5-nvfp4\"})\n/ 1048576\n/ max(model_sync_duration_seconds{job=\"minimax-m2.5-nvfp4\"})",
           "legendFormat": "MiniMax",
           "refId": "A"
         },
