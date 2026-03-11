@@ -1078,4 +1078,10 @@ class _RepetitionDetector:
         if len(tail) < 3:
             return False
         count = recent.count(tail)
-        return count >= self._threshold
+        if count >= self._threshold:
+            print(
+                f"[RepetitionDetector] pattern={tail!r} "
+                f"count={count} window_len={len(recent)}"
+            )
+            return True
+        return False

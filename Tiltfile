@@ -221,6 +221,22 @@ local_resource(
     links=[link("http://localhost:3000", "Grafana")],
 )
 
+# Prometheus Pushgateway — receives model download metrics from short-lived
+# init containers that finish before Prometheus can scrape them.
+helm_resource(
+    "prometheus-pushgateway",
+    "prometheus-community/prometheus-pushgateway",
+    namespace="kube-system",
+    resource_deps=["prometheus-community", "kube-prometheus-stack"],
+    flags=[
+        "--set=serviceMonitor.enabled=true",
+        "--set=serviceMonitor.namespace=kube-system",
+        "--set=serviceMonitor.additionalLabels.release=kube-prometheus-stack",
+        "--set=persistentVolume.enabled=false",
+    ],
+    labels=["monitoring"],
+)
+
 
 
 # ░█▀▀░█▀▀░█▀▀░█▀▄░█▀▀░▀█▀░█▀▀
@@ -337,11 +353,9 @@ k8s_resource(
 )
 
 # Model Sync Script ConfigMap — shared scripts for init containers
-# Includes the s5cmd-based object storage downloader, the Nemotron
-# prepare-deps wrapper (parallel model download + pip cache warmup),
-# and the warmup script (sends dummy requests to pre-heat CUDA caches).
+# Includes the s5cmd-based object storage downloader and the warmup
+# script (sends dummy requests to pre-heat CUDA caches).
 model_sync_script = str(read_file("scripts/model-sync.sh"))
-prepare_deps_nemotron_script = str(read_file("scripts/prepare-deps-nemotron.sh"))
 warmup_nemotron_script = str(read_file("scripts/warmup-nemotron.sh"))
 k8s_yaml(encode_yaml({
     "apiVersion": "v1",
@@ -352,7 +366,6 @@ k8s_yaml(encode_yaml({
     },
     "data": {
         "model-sync.sh": model_sync_script,
-        "prepare-deps-nemotron.sh": prepare_deps_nemotron_script,
         "warmup-nemotron.sh": warmup_nemotron_script,
     },
 }))
@@ -407,7 +420,7 @@ k8s_resource(
         "ray-serve-minimax:rayservice",
         "minimax-llm-svc:service",
     ],
-    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload", "model-sync-scripts"],
+    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload", "model-sync-scripts", "prometheus-pushgateway"],
     labels=["kuberay"],
 )
 
@@ -427,6 +440,17 @@ local_resource(
 # 16 workers (1 per MIG device) across the 2x 2-GPU nodes.
 # Each pod gets 1 MIG 1g.24gb instance via CDI as CUDA device 0.
 # No runtime patching needed — clean GPU enumeration.
+
+# Per-node model cache DaemonSet — downloads weights from Object Storage
+# once per MIG node to a hostPath.  Workers mount it read-only, avoiding
+# 16 redundant downloads (2 downloads total instead of 16).
+k8s_yaml("manifests/nemotron-model-cache.yaml")
+k8s_resource(
+    "nemotron-model-cache",
+    resource_deps=["obj-store-secret", "model-upload", "model-sync-scripts", "mig-config", "prometheus-pushgateway"],
+    labels=["kuberay"],
+)
+
 k8s_yaml("manifests/rayservice-nemotron-parse.yaml")
 k8s_resource(
     new_name="nemotron-parse-service",
@@ -434,7 +458,7 @@ k8s_resource(
         "ray-serve-nemotron-parse:rayservice",
         "nemotron-parse-svc:service",
     ],
-    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload", "model-sync-scripts", "gpu-operator", "mig-config"],
+    resource_deps=["kuberay-operator", "hf-secret", "obj-store-secret", "model-upload", "model-sync-scripts", "gpu-operator", "mig-config", "nemotron-model-cache"],
     labels=["kuberay"],
 )
 

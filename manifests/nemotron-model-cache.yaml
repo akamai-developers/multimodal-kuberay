@@ -1,0 +1,79 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DaemonSet — per-node model cache for Nemotron Parse
+#
+# Runs on each MIG-partitioned node (2 nodes total).  The init container
+# downloads model weights from Object Storage to a hostPath directory.
+# Nemotron worker pods then mount the same hostPath read-only, avoiding
+# 16 redundant downloads (only 2 downloads total — one per node).
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nemotron-model-cache
+  namespace: default
+  labels:
+    app: nemotron-model-cache
+spec:
+  selector:
+    matchLabels:
+      app: nemotron-model-cache
+  template:
+    metadata:
+      labels:
+        app: nemotron-model-cache
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/mig.config
+                    operator: In
+                    values: ["all-1g.24gb"]
+
+      initContainers:
+        - name: model-sync
+          image: rayproject/ray-llm:2.54.0-py311-cu128
+          command: ["/bin/bash", "/scripts/model-sync.sh", "nvidia/NVIDIA-Nemotron-Parse-v1.2", "/model-cache"]
+          securityContext:
+            runAsUser: 0
+          envFrom:
+            - secretRef:
+                name: obj-store-secret
+          env:
+            - name: S5CMD_CONCURRENCY
+              value: "64"
+            - name: S5CMD_PART_SIZE
+              value: "64"
+            - name: PUSHGATEWAY_URL
+              value: "http://prometheus-pushgateway.kube-system.svc.cluster.local:9091"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /model-cache
+            - name: scripts
+              mountPath: /scripts
+          resources:
+            requests:
+              cpu: 500m
+              memory: 256Mi
+
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 10m
+              memory: 16Mi
+
+      volumes:
+        - name: model-cache
+          hostPath:
+            path: /opt/model-cache/nemotron-parse
+            type: DirectoryOrCreate
+        - name: scripts
+          configMap:
+            name: model-sync-scripts
+            defaultMode: 0755

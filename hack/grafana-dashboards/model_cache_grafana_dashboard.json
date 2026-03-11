@@ -30,7 +30,7 @@
     },
     {
       "datasource": "${datasource}",
-      "description": "Time spent in init containers downloading model weights from Akamai Object Storage cache. Computed as the difference between main container start and pod creation time. Lower = faster download.",
+      "description": "Time spent downloading model weights from Object Storage (via Pushgateway metrics from model-sync.sh). Measures exact s5cmd sync duration, excluding s5cmd install overhead.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -79,26 +79,26 @@
         },
         "textMode": "auto"
       },
-      "title": "OBJ Cache Download Time (Init Container)",
+      "title": "OBJ Cache Download Time",
       "type": "stat",
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "max(\n  container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"}\n) - max(\n  kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"}\n)",
-          "legendFormat": "MiniMax M2.5 (4\u00d7GPU)",
+          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5\"})",
+          "legendFormat": "MiniMax M2.5 (4×GPU)",
           "refId": "A"
         },
         {
           "datasource": "${datasource}",
-          "expr": "avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)",
-          "legendFormat": "Nemotron Parse v1.2 (avg)",
+          "expr": "max(model_sync_duration_seconds{job=\"nvidia-nemotron-parse-v1.2\"})",
+          "legendFormat": "Nemotron Parse v1.2 (slowest node)",
           "refId": "B"
         }
       ]
     },
     {
       "datasource": "${datasource}",
-      "description": "Time for the Ray Serve replica to initialize \u2014 this includes loading model weights from disk into GPU memory, compiling CUDA graphs, and running initial health checks. With object storage cache, model files are already on local disk so this phase loads directly without network download.",
+      "description": "Time for the Ray Serve replica to initialize — this includes loading model weights from disk into GPU memory, compiling CUDA graphs, and running initial health checks. With object storage cache, model files are already on local disk so this phase loads directly without network download.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -153,7 +153,7 @@
         {
           "datasource": "${datasource}",
           "expr": "max(ray_serve_replica_initialization_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_initialization_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000",
-          "legendFormat": "MiniMax M2.5 (4\u00d7GPU)",
+          "legendFormat": "MiniMax M2.5 (4×GPU)",
           "refId": "A"
         },
         {
@@ -166,7 +166,7 @@
     },
     {
       "datasource": "${datasource}",
-      "description": "Total time from pod creation to Ray Serve replica becoming healthy. Computed as init container download time (OBJ cache) plus Ray Serve startup time (model loading, CUDA compilation, health checks).",
+      "description": "Total time from model download through Ray Serve replica becoming healthy. Download duration from Pushgateway (exact s5cmd timing), plus Ray Serve initialization latency.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -215,18 +215,18 @@
         },
         "textMode": "auto"
       },
-      "title": "Total Startup Time (Pod \u2192 Ready)",
+      "title": "Total Startup Time (Pod → Ready)",
       "type": "stat",
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "(\n  max(container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"})\n)\n+\n(\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / 1000\n)",
-          "legendFormat": "MiniMax M2.5 (4\u00d7GPU)",
+          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5\"})\n+\n(\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / 1000\n)",
+          "legendFormat": "MiniMax M2.5 (4×GPU)",
           "refId": "A"
         },
         {
           "datasource": "${datasource}",
-          "expr": "avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)\n+\navg(\n  ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n) / 1000",
+          "expr": "max(model_sync_duration_seconds{job=\"nvidia-nemotron-parse-v1.2\"})\n+\navg(\n  ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n) / 1000",
           "legendFormat": "Nemotron Parse v1.2 (avg)",
           "refId": "B"
         }
@@ -246,7 +246,7 @@
     },
     {
       "datasource": "${datasource}",
-      "description": "Breakdown of startup phases for MiniMax M2.5 service (4\u00d7GPU, tensor_parallel_size=4). Shows how much time is spent in object storage cache download (init container) vs model GPU loading vs total startup. The cache download phase should be a small fraction of total.",
+      "description": "Breakdown of startup phases for MiniMax M2.5 service (4×GPU, tensor_parallel_size=4). Shows how much time is spent in object storage cache download (init container) vs model GPU loading vs total startup. The cache download phase should be a small fraction of total.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -345,12 +345,12 @@
         },
         "xTickLabelRotation": 0
       },
-      "title": "MiniMax M2.5 \u2014 Startup Phase Breakdown",
+      "title": "MiniMax M2.5 — Startup Phase Breakdown",
       "type": "barchart",
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "max(\n  container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"}\n) - max(\n  kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"}\n)",
+          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5\"})",
           "legendFormat": "OBJ Download",
           "instant": true,
           "refId": "A"
@@ -364,7 +364,7 @@
         },
         {
           "datasource": "${datasource}",
-          "expr": "(max(container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"}) - max(kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"}))\n+\n(max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000)",
+          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5\"})\n+\n(max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n/ 1000)",
           "legendFormat": "Total Startup",
           "instant": true,
           "refId": "C"
@@ -373,7 +373,7 @@
     },
     {
       "datasource": "${datasource}",
-      "description": "Breakdown of startup phases for Nemotron Parse v1.2 (OCR) service. Shows how much time is spent in object storage cache download (init container) vs model GPU loading vs total startup.",
+      "description": "Breakdown of startup phases for Nemotron Parse v1.2 (OCR) service. OBJ download is measured from the per-node DaemonSet cache (2 downloads shared by 16 workers). Model Load and Total Startup are from the Ray Serve replicas.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -402,7 +402,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "OBJ Download"
+              "options": "Node Cache Download (slowest)"
             },
             "properties": [
               {
@@ -417,7 +417,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Model Load (GPU)"
+              "options": "Model Load (GPU) (avg)"
             },
             "properties": [
               {
@@ -432,7 +432,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Total Startup"
+              "options": "Total Startup (avg)"
             },
             "properties": [
               {
@@ -472,13 +472,13 @@
         },
         "xTickLabelRotation": 0
       },
-      "title": "Nemotron Parse v1.2 \u2014 Startup Phase Breakdown",
+      "title": "Nemotron Parse v1.2 — Startup Phase Breakdown",
       "type": "barchart",
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)",
-          "legendFormat": "OBJ Download (avg)",
+          "expr": "max(model_sync_duration_seconds{job=\"nvidia-nemotron-parse-v1.2\"})",
+          "legendFormat": "Node Cache Download (slowest)",
           "instant": true,
           "refId": "A"
         },
@@ -491,7 +491,7 @@
         },
         {
           "datasource": "${datasource}",
-          "expr": "avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)\n+\navg(\n  ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n) / 1000",
+          "expr": "max(model_sync_duration_seconds{job=\"nvidia-nemotron-parse-v1.2\"})\n+\navg(\n  ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n) / 1000",
           "legendFormat": "Total Startup (avg)",
           "instant": true,
           "refId": "C"
@@ -564,12 +564,12 @@
         "showThresholdMarkers": true,
         "sizing": "auto"
       },
-      "title": "OBJ Download % of Total Startup \u2014 MiniMax",
+      "title": "OBJ Download % of Total Startup — MiniMax",
       "type": "gauge",
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "(\n  max(container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"})\n)\n/ (\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / 1000\n) * 100",
+          "expr": "max(model_sync_duration_seconds{job=\"minimax-m2.5\"})\n/ (\n  max(ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / max(ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"minimax\"})\n  / 1000\n) * 100",
           "legendFormat": "MiniMax Cache %",
           "refId": "A"
         }
@@ -629,20 +629,20 @@
         "showThresholdMarkers": true,
         "sizing": "auto"
       },
-      "title": "OBJ Download % of Total Startup \u2014 Nemotron",
+      "title": "OBJ Download % of Total Startup — Nemotron",
       "type": "gauge",
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)\n/ (\n  avg(\n    ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n    / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  ) / 1000\n) * 100",
-          "legendFormat": "Nemotron Cache %",
+          "expr": "max(model_sync_duration_seconds{job=\"nvidia-nemotron-parse-v1.2\"})\n/ (\n  avg(\n    ray_serve_replica_startup_latency_ms_sum{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n    / ray_serve_replica_startup_latency_ms_count{deployment=~\"LLMServer.*\",application=\"nemotron-parse\"}\n  ) / 1000\n) * 100",
+          "legendFormat": "Nemotron Node Cache %",
           "refId": "A"
         }
       ]
     },
     {
       "datasource": "${datasource}",
-      "description": "Average network throughput during init containers. Uses actual bytes received (container_network_receive_bytes_total) divided by init duration (main container start − pod start). Includes model download, s5cmd install, and any pip cache warmup.",
+      "description": "Model download throughput from Pushgateway metrics (exact bytes downloaded / sync duration from model-sync.sh). MiniMax shows per-worker throughput; Nemotron shows aggregate cluster throughput (2 nodes).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -696,14 +696,14 @@
       "targets": [
         {
           "datasource": "${datasource}",
-          "expr": "max(container_network_receive_bytes_total{pod=~\"ray-serve-minimax.*worker.*\"})\n/ 1048576\n/ (\n  max(container_start_time_seconds{pod=~\"ray-serve-minimax.*worker.*\", container=\"ray-worker\"})\n  - max(kube_pod_start_time{pod=~\"ray-serve-minimax.*worker.*\"})\n)",
+          "expr": "max(model_sync_bytes_total{job=\"minimax-m2.5\"})\n/ 1048576\n/ max(model_sync_duration_seconds{job=\"minimax-m2.5\"})",
           "legendFormat": "MiniMax",
           "refId": "A"
         },
         {
           "datasource": "${datasource}",
-          "expr": "avg(container_network_receive_bytes_total{pod=~\"ray-serve-nemotron-parse.*worker.*\"})\n/ 1048576\n/ avg(\n  container_start_time_seconds{pod=~\"ray-serve-nemotron-parse.*worker.*\", container=\"ray-worker\"}\n  - on(pod) group_left()\n  kube_pod_start_time{pod=~\"ray-serve-nemotron-parse.*worker.*\"}\n)",
-          "legendFormat": "Nemotron (avg)",
+          "expr": "sum(model_sync_bytes_total{job=\"nvidia-nemotron-parse-v1.2\"})\n/ 1048576\n/ max(model_sync_duration_seconds{job=\"nvidia-nemotron-parse-v1.2\"})",
+          "legendFormat": "Nemotron (cluster total)",
           "refId": "B"
         }
       ]

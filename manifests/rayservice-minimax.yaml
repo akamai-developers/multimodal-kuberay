@@ -127,6 +127,9 @@ spec:
                 envFrom:
                   - secretRef:
                       name: obj-store-secret
+                env:
+                  - name: PUSHGATEWAY_URL
+                    value: "http://prometheus-pushgateway.kube-system.svc.cluster.local:9091"
                 volumeMounts:
                   - name: model-cache
                     mountPath: /model-cache

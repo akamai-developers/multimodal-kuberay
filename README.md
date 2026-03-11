@@ -303,7 +303,7 @@ Once complete, access the Tilt UI at http://localhost:10350 to monitor deploymen
    - **GPU Allocation**: 4 GPUs (tensor parallelism on a single 4-GPU Blackwell node)
    - **Context Window**: 65,536 tokens
    - **Capabilities**: Tool calling, chain-of-thought reasoning, structured output
-   - **Model Source**: Cached in Akamai Object Storage, synced to local volume at boot
+   - **Model Source**: Cached in Akamai Object Storage, synced via init container to emptyDir at boot
 
 2. **NVIDIA Nemotron Parse v1.2** (`nvidia/NVIDIA-Nemotron-Parse-v1.2`)
    - **Role**: OCR engine — converts PDF pages to structured text for the research pipeline
@@ -313,7 +313,7 @@ Once complete, access the Tilt UI at http://localhost:10350 to monitor deploymen
    - **Context Window**: 8,192 tokens
    - **Capabilities**: Page-level OCR with layout preservation, 30+ language support
    - **Throughput**: 16 fixed replicas × 8 concurrent sequences = 128 parallel OCR requests; all replicas pre-warmed at deploy time
-   - **Model Source**: Cached in Akamai Object Storage, synced to local volume at boot
+   - **Model Source**: Cached in Akamai Object Storage; a DaemonSet (`nemotron-model-cache`) syncs weights to a hostPath per node, and all 16 workers mount it read-only (2 downloads total instead of 16)
 
 ### MCP Tool Servers
 
@@ -417,7 +417,7 @@ curl --no-buffer \
   -H "Content-Type: application/json" \
   "http://localhost:9099/v1/chat/completions" \
   -d '{
-    "model": "deep-research-agent",
+    "model": "mcp_research_pipeline",
     "messages": [
       {"role": "user", "content": "diffusion models for protein structure prediction"}
     ],
@@ -523,6 +523,7 @@ multimodal-kuberay/
 │   ├── gateway.yaml                # Envoy Gateway + SecurityPolicy + ClientTrafficPolicy
 │   ├── rayservice-minimax.yaml     # MiniMax M2.5 RayService (4 GPUs)
 │   ├── rayservice-nemotron-parse.yaml  # Nemotron Parse v1.2 RayService (16 MIG replicas)
+│   ├── nemotron-model-cache.yaml   # DaemonSet: per-node model cache for Nemotron Parse (hostPath)
 │   ├── nemotron-warmup-job.yaml    # Warmup Job — pre-heats all 16 OCR replicas
 │   ├── openwebui.yaml              # OpenWebUI + Pipelines server deployments
 │   ├── mcp-arxiv-search.yaml       # ArXiv Search MCP server
@@ -540,7 +541,6 @@ multimodal-kuberay/
 │   ├── model-sync.sh               # s5cmd-based Object Storage model downloader
 │   ├── model-upload.sh             # HuggingFace → Object Storage caching
 │   ├── nuke-bucket.sh              # Delete cached models and destroy Object Storage bucket
-│   ├── prepare-deps-nemotron.sh    # Init container: parallel model download + pip warmup
 │   ├── warmup-nemotron.sh          # Warmup: sends 256 concurrent dummy requests
 │   ├── seed-streaming-config.sh    # OpenWebUI postStart hook
 │   ├── test-llm.sh                 # MiniMax M2.5 API smoke test

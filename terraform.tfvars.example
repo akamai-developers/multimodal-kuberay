@@ -15,11 +15,13 @@ kubernetes_version = "1.34"
 region             = "us-sea"
 
 # GPU Node Pool Configuration
-# Options for gpu_node_type:
-#   - "g3-gpu-rtxpro6000-blackwell-2" (NVIDIA Blackwell - default)
-#   - "g2-gpu-rtx4000a4-m" (NVIDIA Ada)
+# 4-GPU node for MiniMax M2.5 (tensor parallelism across all 4 GPUs)
+gpu_big_node_type  = "g3-gpu-rtxpro6000-blackwell-4"
+gpu_big_node_count = 1
+
+# 2-GPU nodes for Nemotron Parse (MIG-partitioned: 4× 1g.24gb per GPU = 8 per node)
 gpu_node_type      = "g3-gpu-rtxpro6000-blackwell-2"
-gpu_node_count     = 3
+gpu_node_count     = 2
 
 # Resource tags for organization and cost tracking
 tags = ["kuberay", "llm", "gpu", "terraform"]

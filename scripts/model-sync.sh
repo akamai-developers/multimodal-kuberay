@@ -6,6 +6,10 @@
 # Env:   OBJ_ENDPOINT_HOSTNAME, OBJ_ACCESS_KEY, OBJ_SECRET_KEY,
 #        OBJ_REGION, MODEL_BUCKET  (all injected via obj-store-secret envFrom)
 #
+# Optional:
+#   PUSHGATEWAY_URL    — Prometheus Pushgateway base URL (e.g. http://svc:9091)
+#                        When set, push download metrics after sync completes.
+#
 # Tuning (optional env vars):
 #   S5CMD_CONCURRENCY  — concurrent parts per file (default: 5)
 #                        Increase for models with few large files (e.g. 64).
@@ -40,13 +44,19 @@ CONCURRENCY="${S5CMD_CONCURRENCY:-5}"
 PART_SIZE="${S5CMD_PART_SIZE:-50}"
 
 echo "Syncing ${MODEL_BUCKET}/${BUCKET_PREFIX} -> ${LOCAL_PATH} (concurrency=${CONCURRENCY}, part_size=${PART_SIZE}MiB)"
-SYNC_START=$(date +%s)
+# Use fractional seconds if GNU date is available (Ubuntu/Debian), fall back to integer (BusyBox/Alpine)
+if date +%s.%N 2>/dev/null | grep -q '\.'; then
+  _ts() { date +%s.%N; }
+else
+  _ts() { date +%s; }
+fi
+SYNC_START=$(_ts)
 "$S5CMD" --endpoint-url "https://${OBJ_ENDPOINT_HOSTNAME}" \
     sync --exclude ".cache/**" \
     --concurrency "${CONCURRENCY}" --part-size "${PART_SIZE}" \
     "s3://${MODEL_BUCKET}/${BUCKET_PREFIX}/*" "${LOCAL_PATH}/"
-SYNC_END=$(date +%s)
-ELAPSED=$(( SYNC_END - SYNC_START ))
+SYNC_END=$(_ts)
+ELAPSED=$(awk "BEGIN {printf \"%.2f\", ${SYNC_END} - ${SYNC_START}}")
 
 # Report download metrics
 FILE_COUNT=$(find "${LOCAL_PATH}" -type f 2>/dev/null | wc -l | tr -d ' ')
@@ -54,10 +64,29 @@ FILE_COUNT=$(find "${LOCAL_PATH}" -type f 2>/dev/null | wc -l | tr -d ' ')
 TOTAL_KB=$(du -sk "${LOCAL_PATH}" 2>/dev/null | awk '{print $1}')
 TOTAL_BYTES=$(( ${TOTAL_KB:-0} * 1024 ))
 TOTAL_GB=$(awk "BEGIN {printf \"%.2f\", ${TOTAL_BYTES} / 1073741824}")
-if [ "$ELAPSED" -gt 0 ]; then
-  SPEED_GBPS=$(awk "BEGIN {printf \"%.2f\", ${TOTAL_BYTES} / 1073741824 / ${ELAPSED}}")
-else
-  SPEED_GBPS="N/A"
-fi
+SPEED_GBPS=$(awk "BEGIN {e=${ELAPSED}+0; if (e>0) printf \"%.2f\", ${TOTAL_BYTES}/1073741824/e; else print \"N/A\"}")
 
 echo "Download complete — ${FILE_COUNT} files, ${TOTAL_GB} GB in ${ELAPSED}s (${SPEED_GBPS} GB/s)"
+
+# ── Push metrics to Prometheus Pushgateway ──────────────────────────────────
+# Derive a short job label from the bucket prefix (e.g. "MiniMaxAI/MiniMax-M2.5" → "minimax-m2.5")
+if [ -n "${PUSHGATEWAY_URL}" ]; then
+  JOB_LABEL=$(echo "${BUCKET_PREFIX}" | awk -F/ '{print tolower($NF)}' | sed 's/[^a-z0-9._-]/-/g')
+  INSTANCE_LABEL="${HOSTNAME:-unknown}"
+  METRICS="# HELP model_sync_duration_seconds Time spent downloading model from object storage
+# TYPE model_sync_duration_seconds gauge
+model_sync_duration_seconds ${ELAPSED}
+# HELP model_sync_bytes_total Total bytes downloaded
+# TYPE model_sync_bytes_total gauge
+model_sync_bytes_total ${TOTAL_BYTES}
+# HELP model_sync_files_total Number of files downloaded
+# TYPE model_sync_files_total gauge
+model_sync_files_total ${FILE_COUNT}
+"
+  if wget -q --timeout=5 -O /dev/null --post-data="${METRICS}" \
+    "${PUSHGATEWAY_URL}/metrics/job/${JOB_LABEL}/instance/${INSTANCE_LABEL}" 2>&1; then
+    echo "[model-sync] Metrics pushed to Pushgateway (job=${JOB_LABEL})"
+  else
+    echo "[model-sync] Warning: Pushgateway push failed (non-fatal)"
+  fi
+fi

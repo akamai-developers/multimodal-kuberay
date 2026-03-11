@@ -173,30 +173,6 @@ spec:
                           operator: In
                           values: ["all-1g.24gb"]
 
-            initContainers:
-              # Download model from Linode Object Storage + pre-warm pip cache in parallel.
-              # The runtime_env pip install runs when Ray creates the Serve
-              # replica, but with wheels already in the cache it completes
-              # in seconds instead of minutes.
-              - name: prepare-deps
-                image: rayproject/ray-llm:2.54.0-py311-cu128
-                command: ["/bin/bash", "/scripts/prepare-deps-nemotron.sh"]
-                envFrom:
-                  - secretRef:
-                      name: obj-store-secret
-                env:
-                  - name: S5CMD_CONCURRENCY
-                    value: "64"
-                  - name: S5CMD_PART_SIZE
-                    value: "64"
-                volumeMounts:
-                  - name: model-cache
-                    mountPath: /model-cache
-                  - name: pip-cache
-                    mountPath: /home/ray/.cache/pip
-                  - name: model-sync
-                    mountPath: /scripts
-
             containers:
               - name: ray-worker
                 image: rayproject/ray-llm:2.54.0-py311-cu128
@@ -234,24 +210,14 @@ spec:
                 volumeMounts:
                   - name: model-cache
                     mountPath: /model-cache
-                  - name: pip-cache
-                    mountPath: /home/ray/.cache/pip
                   - name: dshm
                     mountPath: /dev/shm
-                  - name: model-sync
-                    mountPath: /scripts
             volumes:
               - name: model-cache
-                emptyDir:
-                  sizeLimit: 8Gi   # Nemotron Parse v1.2 is <1B params (~2GB weights)
-              - name: pip-cache
-                emptyDir:
-                  sizeLimit: 4Gi
+                hostPath:
+                  path: /opt/model-cache/nemotron-parse
+                  type: DirectoryOrCreate
               - name: dshm
                 emptyDir:
                   medium: Memory
                   sizeLimit: 4Gi
-              - name: model-sync
-                configMap:
-                  name: model-sync-scripts
-                  defaultMode: 0755

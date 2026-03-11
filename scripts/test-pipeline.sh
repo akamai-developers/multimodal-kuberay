@@ -38,7 +38,7 @@ curl --location --no-buffer \
   --header "Content-Type: application/json" \
   "${PIPELINES_URL}/v1/chat/completions" \
   --data "{
-    \"model\": \"deep-research-agent\",
+    \"model\": \"mcp_research_pipeline\",
     \"messages\": [
       {\"role\": \"user\", \"content\": \"${RESEARCH_TOPIC}\"}
     ],

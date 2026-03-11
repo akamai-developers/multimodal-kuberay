@@ -76,10 +76,12 @@ spec:
             - name: WEBUI_NAME
               value: "Deep Research Agent"
           # ── Seed streaming config ─────────────────────────────────────
-          # OpenWebUI defaults to stream=false for pipeline models.
-          # The postStart hook runs a retry loop that patches both global
-          # config and user rows.  nohup + fd redirect ensures sh exits
+          # OpenWebUI sends stream=false for pipeline models by default.
+          # The postStart hook sets DEFAULT_MODEL_PARAMS.stream_response=True
+          # via the Admin API.  nohup + fd redirect ensures sh exits
           # immediately so the hook doesn't block container readiness.
+          # NOTE: The pipeline server also patches stream=True server-side
+          # as a belt-and-suspenders measure (see pipelines container command).
           lifecycle:
             postStart:
               exec:
@@ -188,6 +190,16 @@ spec:
       containers:
         - name: pipelines
           image: ghcr.io/open-webui/pipelines:main
+          # Override default entrypoint to force streaming for all pipe-type
+          # pipelines. OpenWebUI sometimes sends stream=false for pipeline
+          # models despite config, but its response handler checks Content-Type
+          # (not the request flag) — so returning text/event-stream always works.
+          command: [bash, -c]
+          args:
+            - |
+              sed -i '/^    def job():/a\        form_data.stream = True  # Force streaming for all pipelines' /app/main.py
+              echo "[pipelines-patch] Forced form_data.stream = True in generate_openai_chat_completion"
+              bash start.sh
           ports:
             - containerPort: 9099
               name: http
