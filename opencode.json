@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "multimodal-kuberay/minimax-m2.5",
+  "provider": {
+    "multimodal-kuberay": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "MiniMax on LKE",
+      "options": {
+        "baseURL": "{env:OPENCODE_BASE_URL}",
+        "apiKey": "{env:OPENAI_API_KEY}"
+      },
+      "models": {
+        "minimax-m2.5": {
+          "name": "MiniMax M2.5"
+        }
+      }
+    }
+  }
+}
