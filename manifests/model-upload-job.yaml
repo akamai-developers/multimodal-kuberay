@@ -46,4 +46,4 @@ spec:
             defaultMode: 0755
         - name: staging
           emptyDir:
-            sizeLimit: 600Gi  # MiniMax-M2.5 is a large frontier MoE; needs ~400-500GB staging
+            sizeLimit: 300Gi  # NVFP4 model (~130 GB) + Nemotron Parse staging

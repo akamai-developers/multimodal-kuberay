@@ -41,28 +41,30 @@ spec:
             model_id: minimax-m2.5
             model_source: /model-cache
           engine_kwargs:
-            dtype: bfloat16
-            max_model_len: 65536          # Pipeline sends ~33K tokens; do not reduce below that
-            gpu_memory_utilization: 0.92  # 4x96GB = 384GB VRAM, aggressive utilisation is fine
-            tensor_parallel_size: 4       # All 4 Blackwells on the large node
+            max_model_len: 190000         # NVFP4 fits 190K on 2 GPUs (96 GB each)
+            gpu_memory_utilization: 0.95
+            tensor_parallel_size: 2       # 2 GPUs per replica (2 replicas on 4-GPU node)
             trust_remote_code: true       # Required for minimax_m2 architecture
+            disable_custom_all_reduce: true
+            max_num_batched_tokens: 16384
+            max_num_seqs: 64
             disable_log_stats: false
             enable_auto_tool_choice: true
             tool_call_parser: minimax_m2
             reasoning_parser: minimax_m2_append_think
           deployment_config:
             autoscaling_config:
-              min_replicas: 1
-              max_replicas: 1   # One 4-GPU node; no horizontal scaling
-              target_ongoing_requests: 8
+              min_replicas: 2
+              max_replicas: 2   # 2 replicas × TP=2 = 4 GPUs on one node
+              target_ongoing_requests: 16
               metrics_interval_s: 5
               look_back_period_s: 30
               upscale_delay_s: 15
               downscale_delay_s: 600
-            max_ongoing_requests: 32
+            max_ongoing_requests: 64
   rayClusterConfig:
     rayVersion: "2.54.0"
-    enableInTreeAutoscaling: false  # Fixed single replica — no cluster autoscaling needed
+    enableInTreeAutoscaling: false  # Fixed 2 replicas — no cluster autoscaling needed
     headGroupSpec:
       rayStartParams:
         num-cpus: "0"
@@ -123,7 +125,7 @@ spec:
             initContainers:
               - name: model-download
                 image: alpine:3.20
-                command: ["/bin/sh", "/scripts/model-sync.sh", "MiniMaxAI/MiniMax-M2.5", "/model-cache"]
+                command: ["/bin/sh", "/scripts/model-sync.sh", "lukealonso/MiniMax-M2.5-NVFP4", "/model-cache"]
                 envFrom:
                   - secretRef:
                       name: obj-store-secret
@@ -141,6 +143,20 @@ spec:
                 env:
                   - name: SAFETENSORS_FAST_GPU
                     value: "1"
+                  - name: VLLM_WORKER_MULTIPROC_METHOD
+                    value: "spawn"
+                  - name: VLLM_NVFP4_GEMM_BACKEND
+                    value: "cutlass"
+                  - name: VLLM_USE_FLASHINFER_MOE_FP4
+                    value: "0"
+                  - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
+                    value: "1"
+                  - name: VLLM_ATTENTION_BACKEND
+                    value: "FLASH_ATTN"
+                  - name: NCCL_IB_DISABLE
+                    value: "1"
+                  - name: OMP_NUM_THREADS
+                    value: "8"
                   - name: HUGGING_FACE_HUB_TOKEN
                     valueFrom:
                       secretKeyRef:
@@ -149,7 +165,7 @@ spec:
                 resources:
                   limits:
                     memory: 256Gi
-                    nvidia.com/gpu: "4"   # All 4 GPUs — only fits on the large node
+                    nvidia.com/gpu: "4"   # All 4 GPUs — Ray Serve schedules 2× TP=2 replicas
                   requests:
                     cpu: 16
                     memory: 128Gi
@@ -162,7 +178,7 @@ spec:
             volumes:
               - name: model-cache
                 emptyDir:
-                  sizeLimit: 520Gi  # MiniMax-M2.5 is a large frontier MoE model
+                  sizeLimit: 200Gi  # NVFP4 quantized model is ~130 GB on disk
               - name: dshm
                 emptyDir:
                   medium: Memory

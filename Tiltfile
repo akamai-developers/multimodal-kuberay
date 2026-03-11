@@ -100,7 +100,7 @@ helm_resource(
 # Enable MIG (Multi-Instance GPU) on the 2-GPU Nemotron nodes.
 # Each physical GPU is partitioned into 4x 1g.24gb instances (24 GB each)
 # giving 8 MIG devices per node (16 total across both 2-GPU nodes).
-# The 4-GPU MiniMax node is left untouched (whole GPUs).
+# The 4-GPU MiniMax node is left untouched (whole GPUs, 2x TP=2 replicas).
 
 local_resource(
     "mig-config",
@@ -400,7 +400,7 @@ k8s_resource(
     labels=["kuberay"],
 )
 
-# Model Upload Job — caches MiniMax-M2.5 and Nemotron-Parse-v1.2 in Object Storage
+# Model Upload Job — caches MiniMax-M2.5-NVFP4 and Nemotron-Parse-v1.2 in Object Storage
 k8s_yaml("manifests/model-upload-job.yaml")
 k8s_resource(
     "model-upload",
@@ -412,7 +412,7 @@ k8s_resource(
 # ░█░█░░█░░█░█░░█░░█░█░█▀█░▀▄▀░░░█░█░▄▀░░░░▀▀█░
 # ░▀░▀░▀▀▀░▀░▀░▀▀▀░▀░▀░▀░▀░░▀░░░░▀░▀░▀▀▀░░░▀▀▀░
 
-# MiniMax M2.5 — large MoE on the 4× Blackwell node
+# MiniMax M2.5 NVFP4 — quantized MoE, 2× TP=2 replicas on the 4× Blackwell node
 k8s_yaml("manifests/rayservice-minimax.yaml")
 k8s_resource(
     new_name="minimax-service",
@@ -675,7 +675,24 @@ k8s_resource(
 # ░░▀░░▀▀▀░▀░▀░▀▀▀░▀░▀░▀▀▀
 
 # Print total deployment time once every resource is ready.
-_timer_cmd = "START=%s; NOW=$(date +%%s); ELAPSED=$((NOW - START)); MIN=$((ELAPSED / 60)); SEC=$((ELAPSED %% 60)); echo ''; echo '══════════════════════════════════════════'; echo \"  ✅ All resources ready in ${MIN}m ${SEC}s\"; echo '══════════════════════════════════════════'; echo ''" % _tilt_start_ts
+_timer_cmd = """
+START=%s; NOW=$(date +%%s); ELAPSED=$((NOW - START)); MIN=$((ELAPSED / 60)); SEC=$((ELAPSED %% 60))
+GW_IP=$(kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || echo '<pending>')
+echo ''
+echo '══════════════════════════════════════════════════════════════'
+echo "  ✅ All resources ready in ${MIN}m ${SEC}s"
+echo '══════════════════════════════════════════════════════════════'
+echo ''
+echo "  🌐 OpenWebUI:          http://${GW_IP}/"
+echo "  🔗 API (chat):         http://${GW_IP}/v1/chat/completions"
+echo "  📊 Tilt Dashboard:     http://localhost:10350"
+echo "  🔬 MiniMax Ray:        http://localhost:8265"
+echo "  🧩 Nemotron Ray:       http://localhost:18265"
+echo "  📈 Grafana:            http://localhost:3000"
+echo ''
+echo '══════════════════════════════════════════════════════════════'
+echo ''
+""".strip() % _tilt_start_ts
 local_resource(
     "deployment-timer",
     cmd=_timer_cmd,
