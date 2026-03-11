@@ -2,6 +2,9 @@
 
 Deploy a GPU-accelerated deep research agent on Linode Kubernetes Engine with MCP tool-use, real-time streaming, and an OpenAI-compatible API.
 
+**Create Account**
+- Create an [Akamai Cloud account here](http://login.linode.com/signup?promo=akm-dev-git-300-31126-M055) (we have a $300 credit just for you) 
+
 **Docs**:
 - [Chat completions API and agent harness setup](./docs/chat-completions-and-agents.md)
 - [Benchmarking the public API](./docs/benchmark.md)
@@ -238,8 +241,7 @@ The NVFP4 quantization of MiniMax M2.5 is purpose-built to exploit Blackwell's h
 ## Prerequisites
 
 **Required Tools** (with installation links):
-
-- **Linode Account** — [Sign up](https://login.linode.com/signup) | Generate API token from [Cloud Manager](https://cloud.linode.com/profile/tokens)
+- **Akamai Cloud Account** — [Sign up](http://login.linode.com/signup?promo=akm-dev-git-300-31126-M055) | Generate API token from [Cloud Manager](https://cloud.linode.com/profile/tokens)
 - **Terraform** (>= 1.0) — [Install Guide](https://developer.hashicorp.com/terraform/install)  
   Quick: `brew install terraform` (macOS) or `choco install terraform` (Windows)
 - **Tilt** (>= 0.30) — [Install Guide](https://docs.tilt.dev/install.html)  
