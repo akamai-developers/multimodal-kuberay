@@ -55,7 +55,7 @@ spec:
           deployment_config:
             autoscaling_config:
               min_replicas: 2
-              max_replicas: 2   # 2 replicas × TP=2 = 4 GPUs on one node
+              max_replicas: 2   # 2 replicas x TP=2 = 4 GPUs on one node
               target_ongoing_requests: 16
               metrics_interval_s: 5
               look_back_period_s: 30
@@ -77,13 +77,6 @@ spec:
           containers:
             - name: ray-head
               image: rayproject/ray-llm:2.54.0-py311-cu128
-              env:
-                - name: RAY_GRAFANA_HOST
-                  value: "http://kube-prometheus-stack-grafana.kube-system.svc.cluster.local"
-                - name: RAY_GRAFANA_IFRAME_HOST
-                  value: "http://localhost:3000"
-                - name: RAY_PROMETHEUS_HOST
-                  value: "http://kube-prometheus-stack-prometheus.kube-system.svc.cluster.local:9090"
               ports:
                 - containerPort: 8000
                   name: serve

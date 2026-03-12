@@ -64,8 +64,8 @@ graph TB
         end
 
         subgraph Ray["Ray Serve Clusters"]
-            MinimaxService[MiniMax M2.5 NVFP4 RayService 2×TP=2 replicas]
-            NemotronService[Nemotron Parse v1.2 RayService 16X MIG GPUs]
+            MinimaxService[MiniMax M2.5 NVFP4 <br> RayService 2×TP=2 replicas]
+            NemotronService[Nemotron Parse v1.2 <br> RayService 16X MIG GPUs]
         end
     end
     
@@ -371,8 +371,9 @@ Once deployed, the following services are available:
 - **Nemotron Parse Ray Dashboard**: http://localhost:18265 (via Tilt port-forward)  
   Monitor OCR model replicas and GPU utilization across 16 MIG instances
 
-- **Grafana**: http://localhost:3000 (via Tilt port-forward)  
-  Pre-configured Ray dashboards for model cache, serve deployments, and LLM metrics
+- **Grafana**: Access via Gateway at `http://<GATEWAY_IP>/grafana/`  
+  Pre-configured Ray dashboards for model cache, serve deployments, and LLM metrics  
+  Login with the credentials from `WEBUI_ADMIN_EMAIL` / `WEBUI_ADMIN_PASSWORD` in `.env`
 
 - **Gateway API**: Access via Gateway at `http://<GATEWAY_IP>/v1/chat/completions`  
   Get the Gateway IP: `kubectl get gateway llm-gateway -o jsonpath='{.status.addresses[0].value}'`  

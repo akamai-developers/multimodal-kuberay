@@ -70,3 +70,61 @@ spec:
     http:
       idleTimeout: "3600s"         # 1 hour — keep long-running research streams alive
       streamIdleTimeout: "1800s"   # 30 min — idle timeout per stream
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Grafana HTTPRoute — exposes Grafana dashboards at /grafana/ via the gateway.
+# Grafana runs in kube-system; a ReferenceGrant (created by the Tiltfile) allows
+# this cross-namespace backend reference.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: grafana-route
+  namespace: default
+spec:
+  parentRefs:
+  - name: llm-gateway
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /grafana/
+    backendRefs:
+    - name: kube-prometheus-stack-grafana
+      namespace: kube-system
+      port: 80
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Grafana SecurityPolicy — allows all traffic; Grafana handles its own login.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: grafana-route-auth
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: grafana-route
+  authorization:
+    defaultAction: Allow
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# ReferenceGrant — allows the Grafana HTTPRoute in the default namespace to
+# reference the Grafana Service backend in kube-system.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-grafana-from-default
+  namespace: kube-system
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: default
+  to:
+  - group: ""
+    kind: Service
+    name: kube-prometheus-stack-grafana

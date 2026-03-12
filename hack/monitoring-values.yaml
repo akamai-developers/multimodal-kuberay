@@ -6,11 +6,11 @@ grafana:
       labelValue: "1"
       searchNamespace: ALL
   grafana.ini:
-    security:
-      allow_embedding: true
+    server:
+      root_url: "%(protocol)s://%(domain)s/grafana/"
+      serve_from_sub_path: true
     auth.anonymous:
-      enabled: true
-      org_role: Editor
+      enabled: false
   dashboardProviders:
     dashboardproviders.yaml:
       apiVersion: 1

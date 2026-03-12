@@ -210,16 +210,13 @@ helm_resource(
     flags=[
         "--values=./hack/monitoring-values.yaml",
         "--timeout=600s",
+        "--set=grafana.adminUser=%s" % webui_admin_email,
+        "--set=grafana.adminPassword=%s" % webui_admin_password,
     ],
     labels=["monitoring"],
 )
-local_resource(
-    "grafana",
-    serve_cmd="kubectl port-forward -n kube-system svc/kube-prometheus-stack-grafana 3000:80",
-    resource_deps=["kube-prometheus-stack"],
-    labels=["monitoring"],
-    links=[link("http://localhost:3000", "Grafana")],
-)
+# Grafana is exposed via the llm-gateway at /grafana/ (native auth).
+# The gateway IP link is registered in the llm-gateway k8s_resource below.
 
 # Prometheus Pushgateway — receives model download metrics from short-lived
 # init containers that finish before Prometheus can scrape them.
@@ -315,6 +312,7 @@ for resource in gateway_yaml:
         }]
 
 k8s_yaml(encode_yaml_stream(gateway_yaml))
+
 k8s_resource(
     new_name="llm-gateway",
     objects=[
@@ -322,9 +320,12 @@ k8s_resource(
     "llm-route:httproute",
     "llm-gateway-auth:securitypolicy",
     "llm-gateway-client-policy:clienttrafficpolicy",
-    "envoy:gatewayclass"
+    "envoy:gatewayclass",
+    "grafana-route:httproute",
+    "grafana-route-auth:securitypolicy",
+    "allow-grafana-from-default:referencegrant",
     ],
-    resource_deps=["envoy-gateway", "llm-gateway-auth"],
+    resource_deps=["envoy-gateway", "llm-gateway-auth", "kube-prometheus-stack"],
     labels=["gateway"],
 )
 
@@ -688,7 +689,7 @@ echo "  🔗 API (chat):         http://${GW_IP}/v1/chat/completions"
 echo "  📊 Tilt Dashboard:     http://localhost:10350"
 echo "  🔬 MiniMax Ray:        http://localhost:8265"
 echo "  🧩 Nemotron Ray:       http://localhost:18265"
-echo "  📈 Grafana:            http://localhost:3000"
+echo "  📈 Grafana:            http://${GW_IP}/grafana/"
 echo ''
 echo '══════════════════════════════════════════════════════════════'
 echo ''
